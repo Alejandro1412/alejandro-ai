@@ -1,0 +1,331 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+ * ALEJANDRO AI design tokens.
+ * Healthcare + AI identity: off-white / slate surfaces, navy ink, indigo primary, teal accent.
+ * Every color is a token so light, dark and high-contrast modes are explicit, not automatic flips.
+ */
+@layer base {
+  :root {
+    --font-sans: 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+    --font-display: 'Plus Jakarta Sans', 'Inter', ui-sans-serif, system-ui, sans-serif;
+    --font-scale: 1;
+
+    --bg: 248 249 251;
+    --surface: 255 255 255;
+    --surface-2: 244 246 249;
+    --surface-3: 236 240 245;
+    --border: 226 231 238;
+    --border-strong: 203 211 222;
+    --ink: 15 23 42;
+    --ink-2: 71 85 105;
+    --ink-3: 100 116 139;
+    --navy: 12 24 56;
+
+    --primary: 79 70 229;
+    --primary-strong: 67 56 202;
+    --primary-fg: 255 255 255;
+    --primary-soft: 238 240 255;
+    --accent: 13 148 136;
+    --accent-strong: 15 118 110;
+    --accent-soft: 229 247 245;
+    --success: 21 128 61;
+    --success-soft: 232 247 238;
+    --warning: 180 83 9;
+    --warning-soft: 254 243 226;
+    --danger: 190 18 60;
+    --danger-soft: 255 238 242;
+    --info: 3 105 161;
+    --info-soft: 230 244 252;
+    --ring: 79 70 229;
+
+    --chart-1: #4f46e5;
+    --chart-2: #0d9488;
+    --chart-3: #d97706;
+    --chart-4: #db2777;
+    --chart-grid: #e2e7ee;
+    --chart-axis: #64748b;
+    color-scheme: light;
+  }
+
+  .dark {
+    --bg: 8 13 26;
+    --surface: 14 21 38;
+    --surface-2: 20 29 50;
+    --surface-3: 29 40 66;
+    --border: 36 48 74;
+    --border-strong: 55 70 102;
+    --ink: 236 240 247;
+    --ink-2: 176 188 208;
+    --ink-3: 136 150 175;
+    --navy: 226 232 240;
+
+    --primary: 129 140 248;
+    --primary-strong: 165 180 252;
+    --primary-fg: 12 16 40;
+    --primary-soft: 30 34 78;
+    --accent: 45 212 191;
+    --accent-strong: 94 234 212;
+    --accent-soft: 13 50 52;
+    --success: 74 222 128;
+    --success-soft: 16 50 34;
+    --warning: 251 191 36;
+    --warning-soft: 58 42 12;
+    --danger: 251 113 133;
+    --danger-soft: 64 18 32;
+    --info: 56 189 248;
+    --info-soft: 12 42 62;
+    --ring: 129 140 248;
+
+    --chart-1: #6366f1;
+    --chart-2: #0d9488;
+    --chart-3: #d97706;
+    --chart-4: #db2777;
+    --chart-grid: #24304a;
+    --chart-axis: #8896af;
+    color-scheme: dark;
+  }
+
+  /* High-contrast mode (low vision): stronger ink, borders and focus. */
+  .hc {
+    --ink-2: var(--ink);
+    --ink-3: 51 65 85;
+    --border: 100 116 139;
+    --border-strong: 51 65 85;
+    --primary: 55 48 163;
+    --ring: 250 204 21;
+  }
+  .dark.hc {
+    --ink: 255 255 255;
+    --ink-2: 255 255 255;
+    --ink-3: 214 222 235;
+    --border: 148 163 184;
+    --border-strong: 203 213 225;
+    --primary: 165 180 252;
+    --ring: 250 204 21;
+  }
+
+  /* Readable font (Atkinson Hyperlegible, designed for low-vision readers). */
+  .readable-font {
+    --font-sans: 'Atkinson Hyperlegible', 'Inter', ui-sans-serif, system-ui, sans-serif;
+    --font-display: 'Atkinson Hyperlegible', 'Inter', ui-sans-serif, system-ui, sans-serif;
+    letter-spacing: 0.01em;
+    word-spacing: 0.04em;
+  }
+  .readable-font p,
+  .readable-font li {
+    line-height: 1.75;
+  }
+
+  .underline-links a:not([data-no-underline]) {
+    text-decoration: underline;
+    text-underline-offset: 3px;
+  }
+
+  html {
+    font-size: calc(16px * var(--font-scale));
+    -webkit-text-size-adjust: 100%;
+    background: rgb(var(--bg));
+  }
+  body {
+    @apply bg-bg font-sans text-ink antialiased;
+    font-feature-settings: 'cv11', 'ss01';
+    text-rendering: optimizeLegibility;
+  }
+  h1,
+  h2,
+  h3 {
+    @apply font-display tracking-tight;
+  }
+  :focus-visible {
+    outline: 2px solid rgb(var(--ring));
+    outline-offset: 2px;
+    border-radius: 6px;
+  }
+  .hc :focus-visible {
+    outline-width: 3px;
+    outline-offset: 3px;
+  }
+  ::selection {
+    background: rgb(var(--primary) / 0.2);
+  }
+
+  .reduce-motion *,
+  .reduce-motion *::before,
+  .reduce-motion *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+}
+
+@layer components {
+  .card {
+    /* min-w-0: cards are usually grid/flex items; without it long nowrap content widens the page on phones. */
+    @apply min-w-0 rounded-2xl border border-border bg-surface shadow-card;
+  }
+  .label {
+    @apply mb-1.5 block text-sm font-medium text-ink;
+  }
+  .input {
+    @apply block w-full rounded-xl border border-border bg-surface px-3.5 py-2.5 text-[0.9375rem] text-ink shadow-sm transition placeholder:text-ink-3 hover:border-border-strong focus:border-primary focus:outline-none focus:ring-4 focus:ring-primary/15 disabled:cursor-not-allowed disabled:opacity-60;
+  }
+  .input-error {
+    @apply border-danger focus:border-danger focus:ring-danger/15;
+  }
+  .skeleton {
+    @apply relative overflow-hidden rounded-lg bg-surface-3;
+  }
+  .skeleton::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    transform: translateX(-100%);
+    background: linear-gradient(90deg, transparent, rgb(var(--surface) / 0.55), transparent);
+    animation: shimmer 1.4s infinite;
+  }
+  .scrollbar-thin {
+    scrollbar-width: thin;
+    scrollbar-color: rgb(var(--border-strong)) transparent;
+  }
+  .text-balance {
+    text-wrap: balance;
+  }
+  .safe-bottom {
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+  .bg-grid {
+    background-image: linear-gradient(rgb(var(--border) / 0.6) 1px, transparent 1px), linear-gradient(90deg, rgb(var(--border) / 0.6) 1px, transparent 1px);
+    background-size: 32px 32px;
+  }
+}
+
+@keyframes shimmer {
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+/* Capitalize only the first letter (dates like "martes 29 de septiembre"). */
+@layer utilities {
+  .cap-first {
+    display: inline-block;
+  }
+  .cap-first::first-letter {
+    text-transform: uppercase;
+  }
+}
+
+/* ───────────── Motion system ───────────── */
+@layer components {
+  /* Lenis smooth scroll */
+  html.lenis,
+  html.lenis body {
+    height: auto;
+  }
+  .lenis-smooth {
+    scroll-behavior: auto !important;
+  }
+  .lenis-stopped {
+    overflow: hidden;
+  }
+
+  .marquee-track {
+    animation: marquee linear infinite;
+  }
+  @keyframes marquee {
+    to {
+      transform: translateX(-100%);
+    }
+  }
+
+  /* Pointer spotlight: a soft glow + lit border that follows the cursor (set by useSpotlight). */
+  .spotlight {
+    position: relative;
+    --mx: 50%;
+    --my: 50%;
+  }
+  .spotlight::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.35s ease;
+    background:
+      radial-gradient(420px circle at var(--mx) var(--my), rgb(var(--primary) / 0.1), transparent 45%);
+  }
+  .spotlight::before {
+    content: '';
+    position: absolute;
+    inset: -1px;
+    border-radius: inherit;
+    padding: 1px;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.35s ease;
+    background: radial-gradient(260px circle at var(--mx) var(--my), rgb(var(--primary) / 0.7), rgb(var(--accent) / 0.35) 40%, transparent 70%);
+    -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor;
+    mask-composite: exclude;
+  }
+  .spotlight:hover::after,
+  .spotlight:hover::before {
+    opacity: 1;
+  }
+  .reduce-motion .spotlight::after,
+  .reduce-motion .spotlight::before {
+    display: none;
+  }
+
+  /* Page enter transition for routed views */
+  .page-enter {
+    animation: page-enter 0.5s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  }
+  @keyframes page-enter {
+    from {
+      opacity: 0;
+      transform: translateY(10px);
+      filter: blur(4px);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+      filter: none;
+    }
+  }
+  /* Staggered entrance for direct children */
+  .stagger > * {
+    animation: page-enter 0.6s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  }
+  .stagger > *:nth-child(2) { animation-delay: 60ms; }
+  .stagger > *:nth-child(3) { animation-delay: 120ms; }
+  .stagger > *:nth-child(4) { animation-delay: 180ms; }
+  .stagger > *:nth-child(5) { animation-delay: 240ms; }
+  .stagger > *:nth-child(6) { animation-delay: 300ms; }
+  .stagger > *:nth-child(n + 7) { animation-delay: 360ms; }
+
+  .text-gradient-brand {
+    @apply bg-gradient-to-r from-[#a5b4fc] via-[#5eead4] to-[#c4b5fd] bg-clip-text text-transparent;
+  }
+  .noise-overlay {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='.5'/%3E%3C/svg%3E");
+  }
+}
+@keyframes scroll-hint {
+  0% { transform: translateY(-100%); }
+  100% { transform: translateY(260%); }
+}

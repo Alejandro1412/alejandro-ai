@@ -1,0 +1,20 @@
+{
+  "name": "alejandro-ai",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Alejandro AI — AI Clinic Operations & Reception Assistant",
+  "workspaces": ["backend", "frontend"],
+  "scripts": {
+    "dev": "npm run dev --workspace backend & npm run dev --workspace frontend",
+    "dev:backend": "npm run dev --workspace backend",
+    "dev:frontend": "npm run dev --workspace frontend",
+    "build": "npm run build --workspaces",
+    "lint": "npm run lint --workspaces",
+    "typecheck": "npm run typecheck --workspaces",
+    "test": "npm run test --workspaces",
+    "db:migrate": "npm run db:migrate --workspace backend",
+    "db:seed": "npm run db:seed --workspace backend",
+    "db:reset": "npm run db:reset --workspace backend"
+  },
+  "engines": { "node": ">=20.11" }
+}

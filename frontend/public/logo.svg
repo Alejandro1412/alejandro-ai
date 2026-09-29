@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 260 64" role="img" aria-label="Alejandro AI">
+  <defs>
+    <linearGradient id="aai-g2" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#5b52f0"/>
+      <stop offset="1" stop-color="#2a2489"/>
+    </linearGradient>
+  </defs>
+  <rect x="2" y="2" width="60" height="60" rx="17" fill="url(#aai-g2)"/>
+  <g fill="#fff"><rect x="27" y="12" width="10" height="14" rx="5"/><rect x="27" y="38" width="10" height="14" rx="5"/><rect x="12" y="27" width="14" height="10" rx="5"/><rect x="38" y="27" width="14" height="10" rx="5"/></g>
+  <circle cx="32" cy="32" r="4.6" fill="#2dd4bf"/><circle cx="47.5" cy="16.5" r="3.2" fill="#2dd4bf"/>
+  <path d="M44.2 19.8 L37.6 26.4" stroke="#2dd4bf" stroke-width="2" stroke-linecap="round" opacity=".85"/>
+  <text x="76" y="41" font-family="Plus Jakarta Sans, Inter, Arial, sans-serif" font-size="26" font-weight="700" fill="#0c1838">Alejandro <tspan fill="#4f46e5">AI</tspan></text>
+</svg>

@@ -1,0 +1,80 @@
+# Alejandro AI — full local stack.
+#   docker compose up --build        → http://localhost:8080  (API docs: http://localhost:8080/api/docs)
+# Demo data (NovaCare Medical Center) is loaded automatically into an empty database.
+name: alejandro-ai
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: alejandro
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d alejandro"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    restart: unless-stopped
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD:-postgres}@postgres:5432/alejandro
+      REDIS_URL: redis://redis:6379
+      QUEUE_DRIVER: bullmq
+      APP_URL: ${APP_URL:-http://localhost:8080}
+      API_URL: ${API_URL:-http://localhost:8080}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:8080}
+      # Local demo defaults — override in .env for any shared/hosted environment.
+      JWT_SECRET: ${JWT_SECRET:-local-docker-access-secret-change-me-0123456789}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:-local-docker-refresh-secret-change-me-0123456789}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:-6c6f63616c2d646f636b65722d6b65792d6368616e67652d6d652d3031323334}
+      SEED_DEMO_DATA: ${SEED_DEMO_DATA:-true}
+      WHATSAPP_DEFAULT_CLINIC_SLUG: ${WHATSAPP_DEFAULT_CLINIC_SLUG:-novacare}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports:
+      - "${BACKEND_PORT:-3000}:3000"
+
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "${FRONTEND_PORT:-8080}:8080"
+
+volumes:
+  pgdata:
+  redisdata:

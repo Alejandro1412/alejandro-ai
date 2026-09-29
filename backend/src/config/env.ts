@@ -1,0 +1,102 @@
+import { z } from 'zod';
+
+/**
+ * Typed, validated environment. The app refuses to boot with an invalid configuration.
+ * Every external integration falls back to a mock provider when its credentials are absent.
+ */
+const bool = z
+  .string()
+  .optional()
+  .transform((v) => v === 'true' || v === '1');
+
+export const envSchema = z.object({
+  NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
+  PORT: z.coerce.number().int().default(3000),
+  APP_URL: z.string().url().default('http://localhost:5173'),
+  API_URL: z.string().url().default('http://localhost:3000'),
+  CORS_ORIGINS: z.string().default('http://localhost:5173,http://localhost:4173'),
+
+  DATABASE_URL: z.string().min(1),
+  DATABASE_POOL_MAX: z.coerce.number().int().default(10),
+  REDIS_URL: z.string().optional(),
+  QUEUE_DRIVER: z.enum(['bullmq', 'inline']).default('bullmq'),
+
+  JWT_SECRET: z.string().min(32, 'JWT_SECRET must be at least 32 characters'),
+  JWT_REFRESH_SECRET: z.string().min(32, 'JWT_REFRESH_SECRET must be at least 32 characters'),
+  JWT_ACCESS_TTL: z.string().default('15m'),
+  JWT_REFRESH_TTL_DAYS: z.coerce.number().int().default(14),
+  /** 64 hex chars (32 bytes) used for AES-256-GCM encryption of integration secrets. */
+  ENCRYPTION_KEY: z.string().regex(/^[0-9a-f]{64}$/i, 'ENCRYPTION_KEY must be 64 hex characters'),
+
+  // AI
+  AI_DEFAULT_PROVIDER: z.enum(['mock', 'openai', 'anthropic', 'gemini']).default('mock'),
+  OPENAI_API_KEY: z.string().optional(),
+  ANTHROPIC_API_KEY: z.string().optional(),
+  GEMINI_API_KEY: z.string().optional(),
+  EMBEDDINGS_PROVIDER: z.enum(['local', 'openai']).default('local'),
+  AI_REQUEST_TIMEOUT_MS: z.coerce.number().int().default(30000),
+  AI_MAX_TOOL_ITERATIONS: z.coerce.number().int().default(6),
+  AI_DEBUG_TRACES: bool,
+
+  // Calendar
+  GOOGLE_CLIENT_ID: z.string().optional(),
+  GOOGLE_CLIENT_SECRET: z.string().optional(),
+  GOOGLE_REDIRECT_URI: z.string().optional(),
+
+  // WhatsApp (Meta Cloud API)
+  WHATSAPP_TOKEN: z.string().optional(),
+  WHATSAPP_PHONE_NUMBER_ID: z.string().optional(),
+  WHATSAPP_VERIFY_TOKEN: z.string().optional(),
+  WHATSAPP_APP_SECRET: z.string().optional(),
+  WHATSAPP_DEFAULT_CLINIC_SLUG: z.string().optional(),
+
+  // Billing
+  STRIPE_SECRET_KEY: z.string().optional(),
+  STRIPE_WEBHOOK_SECRET: z.string().optional(),
+  /** Stripe Price ids (price_…) for each plan and interval; synced into the plans table at boot. */
+  STRIPE_PRICE_STARTER_MONTHLY: z.string().optional(),
+  STRIPE_PRICE_STARTER_YEARLY: z.string().optional(),
+  STRIPE_PRICE_PROFESSIONAL_MONTHLY: z.string().optional(),
+  STRIPE_PRICE_PROFESSIONAL_YEARLY: z.string().optional(),
+  STRIPE_PRICE_CLINIC_MONTHLY: z.string().optional(),
+  STRIPE_PRICE_CLINIC_YEARLY: z.string().optional(),
+
+  // Notifications
+  EMAIL_API_KEY: z.string().optional(),
+  EMAIL_FROM: z.string().default('Alejandro AI <no-reply@alejandro.ai>'),
+  /** Twilio credentials as ACCOUNT_SID:AUTH_TOKEN */
+  SMS_API_KEY: z.string().optional(),
+  SMS_FROM: z.string().optional(),
+
+  // Security
+  RATE_LIMIT_TTL_MS: z.coerce.number().int().default(60000),
+  RATE_LIMIT_MAX: z.coerce.number().int().default(300),
+  PUBLIC_CHAT_RATE_LIMIT_MAX: z.coerce.number().int().default(30),
+  SWAGGER_ENABLED: z
+    .string()
+    .optional()
+    .transform((v) => v !== 'false'),
+});
+
+export type Env = z.infer<typeof envSchema>;
+
+let cached: Env | null = null;
+
+export function loadEnv(source: NodeJS.ProcessEnv = process.env): Env {
+  const parsed = envSchema.safeParse(source);
+  if (!parsed.success) {
+    const issues = parsed.error.issues.map((i) => `  - ${i.path.join('.')}: ${i.message}`).join('\n');
+    throw new Error(`Invalid environment configuration:\n${issues}`);
+  }
+  cached = parsed.data;
+  return cached;
+}
+
+export function env(): Env {
+  return cached ?? loadEnv();
+}
+
+/** Only for tests: forget the cached env so a new process.env is picked up. */
+export function resetEnvCache(): void {
+  cached = null;
+}
