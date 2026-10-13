@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
-import { HiArrowLeft, HiOutlineLockClosed, HiOutlinePencilSquare, HiPlus } from 'react-icons/hi2';
+import { HiArrowLeft, HiOutlineArchiveBox, HiOutlineLockClosed, HiOutlinePencilSquare, HiPlus } from 'react-icons/hi2';
 import { Link, useParams } from 'react-router-dom';
 import { Button } from '@/components/ui/Button';
 import { Avatar, Badge, Card, CardHeader, statusTone } from '@/components/ui/Display';
@@ -9,9 +9,10 @@ import { useAuth } from '@/contexts/AuthContext';
 import { usePreferences, useT } from '@/contexts/PreferencesContext';
 import { api } from '@/lib/api';
 import { doctorName, fmtDate, fmtDateTime, fmtRelative, fullName } from '@/lib/format';
-import type { Patient } from '@/types';
 import { NewAppointmentDialog } from '../appointments/NewAppointmentDialog';
 import { PatientFormDialog } from './PatientFormDialog';
+import { PatientPrivacyPanel } from './PatientPrivacyPanel';
+import type { PatientV3 } from './types';
 
 export default function PatientDetailPage() {
   const { id = '' } = useParams();
@@ -21,17 +22,24 @@ export default function PatientDetailPage() {
   const tz = me?.clinic.timezone;
   const [editing, setEditing] = useState(false);
   const [booking, setBooking] = useState(false);
-  const q = useQuery({ queryKey: ['patients', id], queryFn: () => api.get<Patient>(`/patients/${id}`) });
+  const q = useQuery({ queryKey: ['patients', id], queryFn: () => api.get<PatientV3>(`/patients/${id}`) });
 
   if (q.isLoading) return <Skeleton className="h-96 rounded-2xl" />;
   if (q.isError || !q.data) return <ErrorState error={q.error} onRetry={() => void q.refetch()} />;
   const p = q.data;
+  const anonymized = Boolean(p.anonymizedAt);
 
   return (
     <div className="space-y-4">
       <Link to="/patients" className="inline-flex items-center gap-1.5 text-sm font-medium text-ink-2 hover:text-ink">
         <HiArrowLeft aria-hidden="true" /> {t('patients.title')}
       </Link>
+      {anonymized && (
+        <div role="status" className="flex items-start gap-2.5 rounded-2xl border border-border bg-surface-2 px-4 py-3 text-sm text-ink-2">
+          <HiOutlineArchiveBox className="mt-0.5 shrink-0 text-lg text-ink-3" aria-hidden="true" />
+          {t('admin.privacy.anonymizedBanner', { date: fmtDate(p.anonymizedAt!, prefs.lang) })}
+        </div>
+      )}
       <Card>
         <div className="flex flex-col gap-4 p-5 sm:flex-row sm:items-center">
           <Avatar name={fullName(p)} size={64} />
@@ -49,12 +57,12 @@ export default function PatientDetailPage() {
             </div>
           </div>
           <div className="flex gap-2">
-            {can('patients.update') && (
+            {can('patients.update') && !anonymized && (
               <Button variant="secondary" icon={<HiOutlinePencilSquare aria-hidden="true" />} onClick={() => setEditing(true)}>
                 {t('common.edit')}
               </Button>
             )}
-            {can('appointments.create') && (
+            {can('appointments.create') && !anonymized && (
               <Button icon={<HiPlus aria-hidden="true" />} onClick={() => setBooking(true)}>
                 {t('appointments.new')}
               </Button>
@@ -120,6 +128,7 @@ export default function PatientDetailPage() {
               )}
             </dl>
           </Card>
+          <PatientPrivacyPanel patient={p} />
           <Card aria-labelledby="pc-h">
             <CardHeader id="pc-h" title={t('patients.conversations')} />
             <ul className="divide-y divide-border px-2 pb-2">

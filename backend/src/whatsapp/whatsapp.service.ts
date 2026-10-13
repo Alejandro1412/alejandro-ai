@@ -2,7 +2,10 @@ import { Inject, Injectable, Logger } from '@nestjs/common';
 import { eq } from 'drizzle-orm';
 import { env } from '../config/env';
 import { Database, DB } from '../database/database.module';
-import { clinics, webhookEvents } from '../database/schema';
+import { appointments, webhookEvents } from '../database/schema';
+import { asc, gte, inArray, isNotNull, isNull } from 'drizzle-orm';
+import { tenantScope } from '../database/tenant';
+import { WhatsAppChannelsService } from '../notifications/providers/whatsapp-channels.service';
 import { TenantContext } from '../database/tenant';
 import { ROLE_DEFINITIONS } from '../rbac/permissions';
 import { AuditService } from '../audit/audit.service';
@@ -15,7 +18,7 @@ import { ChatService } from '../ai/chat.service';
 import type { Attachment } from '../ai/attachments';
 import { UnauthorizedError } from '../common/errors/app-error';
 
-type Option = { label: string; action: Record<string, unknown> };
+type Option = { label: string; action: Record<string, unknown> | null };
 
 /**
  * WhatsApp channel adapter. Inbound messages run through the exact same orchestrator as webchat;
@@ -34,11 +37,13 @@ export class WhatsAppService {
     private readonly audit: AuditService,
     private readonly usage: UsageService,
     private readonly billing: BillingService,
+    private readonly waChannels: WhatsAppChannelsService,
   ) {}
 
-  status() {
+  async status() {
     const e = env();
     return {
+      clinicChannel: await this.waChannels.get(),
       provider: this.channels.whatsapp.name,
       connected: this.channels.whatsapp.name === 'meta',
       phoneNumberId: e.WHATSAPP_PHONE_NUMBER_ID ? `…${e.WHATSAPP_PHONE_NUMBER_ID.slice(-4)}` : null,
@@ -71,7 +76,7 @@ export class WhatsAppService {
         .onConflictDoNothing()
         .returning({ id: webhookEvents.id });
       if (!inserted.length) continue; // duplicate delivery (Meta retries)
-      const clinic = await this.resolveClinic();
+      const clinic = await this.waChannels.resolveClinic(msg.phoneNumberId);
       if (!clinic) {
         await this.db.update(webhookEvents).set({ status: 'FAILED', error: 'No clinic mapped to this WhatsApp number' }).where(eq(webhookEvents.id, inserted[0].id));
         continue;
@@ -107,23 +112,50 @@ export class WhatsAppService {
       const started = await this.chat.start({ channel: 'WHATSAPP', patientId: patient?.id ?? null, externalContact: contact, language: patient?.preferredLanguage === 'en' ? 'en' : 'es' });
       conv = await this.conversations.getRaw(started.conversation.id);
     }
-    const meta = conv.metadata as { waOptions?: Option[] };
+    const meta = conv.metadata as { waOptions?: Option[]; waOptionsAt?: string };
     const pick = msg.text.trim().match(/^(\d{1,2})$/);
-    const option = pick && meta.waOptions ? meta.waOptions[Number(pick[1]) - 1] : undefined;
+    // A reminder sent after the last menu takes precedence: 1 confirm · 2 reschedule · 3 cancel.
+    const reminder = pick && conv.patientId ? await this.remindedAppointment(conv.patientId, meta.waOptionsAt) : null;
+    const reminderOptions: Option[] | null = reminder
+      ? [
+          { label: 'Confirmo mi asistencia', action: { type: 'confirm_attendance', appointmentId: reminder.id } },
+          { label: 'Quiero reprogramar', action: { type: 'start_reschedule', appointmentId: reminder.id, doctorId: reminder.doctorId } },
+          { label: 'Quiero cancelar', action: { type: 'confirm_cancel', appointmentId: reminder.id } },
+        ]
+      : null;
+    const menu = reminderOptions ?? meta.waOptions;
+    const option = pick && menu ? menu[Number(pick[1]) - 1] : undefined;
     const result = await this.chat.send(conv.id, option ? option.label : msg.text, option?.action ?? null);
     if (!result.assistantMessage) return { reply: null };
     const { text, options } = renderForWhatsApp(result.assistantMessage.content, result.assistantMessage.attachments, conv.language === 'en' ? 'en' : 'es');
     const fresh = await this.conversations.getRaw(conv.id);
-    await this.conversations.patch(conv.id, { metadata: { ...(fresh.metadata as Record<string, unknown>), waOptions: options } });
-    await this.channels.whatsapp.sendMessage(contact, text);
-    await this.usage.record({ kind: 'WHATSAPP_MESSAGE', provider: this.channels.whatsapp.name, conversationId: conv.id });
+    await this.conversations.patch(conv.id, { metadata: { ...(fresh.metadata as Record<string, unknown>), waOptions: options, waOptionsAt: new Date().toISOString() } });
+    const wa = await this.waChannels.provider();
+    await wa.sendMessage(contact, text);
+    await this.usage.record({ kind: 'WHATSAPP_MESSAGE', provider: wa.name, conversationId: conv.id });
     return { reply: text, conversationId: conv.id, trace: result.trace };
   }
 
-  private async resolveClinic() {
-    const slug = env().WHATSAPP_DEFAULT_CLINIC_SLUG;
-    const [row] = slug ? await this.db.select().from(clinics).where(eq(clinics.slug, slug)) : await this.db.select().from(clinics).limit(1);
-    return row ?? null;
+  /** Next appointment whose reminder went out after the last menu we showed (and is not confirmed yet). */
+  private async remindedAppointment(patientId: string, lastMenuAt?: string) {
+    const [a] = await this.db
+      .select({ id: appointments.id, doctorId: appointments.doctorId, reminderSentAt: appointments.reminderSentAt })
+      .from(appointments)
+      .where(
+        tenantScope(
+          appointments,
+          eq(appointments.patientId, patientId),
+          inArray(appointments.status, ['PENDING', 'CONFIRMED']),
+          isNotNull(appointments.reminderSentAt),
+          isNull(appointments.patientConfirmedAt),
+          gte(appointments.startTime, new Date()),
+        ),
+      )
+      .orderBy(asc(appointments.startTime))
+      .limit(1);
+    if (!a?.reminderSentAt) return null;
+    if (lastMenuAt && new Date(lastMenuAt) > a.reminderSentAt) return null;
+    return a;
   }
 
   canUse() {
@@ -148,6 +180,11 @@ export function renderForWhatsApp(content: string, attachments: Attachment[], la
                 : { type: 'book_slot', doctorId: g.doctorId, startTime: s.start, serviceId: a.serviceId ?? null },
           });
         }
+    } else if (a.type === 'consent') {
+      lines[0] = `${content}\n${lang === 'en' ? 'Privacy policy' : 'Política de privacidad'}: ${a.privacyUrl}`;
+      options.push({ label: a.acceptLabel, action: { type: 'give_consent', granted: 'yes' } }, { label: a.declineLabel, action: { type: 'give_consent', granted: 'no' } });
+    } else if (a.type === 'confirm') {
+      options.push({ label: a.confirmLabel, action: a.action }, { label: a.cancelMessage, action: null });
     } else if (a.type === 'appointments' && a.purpose !== 'list') {
       for (const i of a.items)
         options.push({

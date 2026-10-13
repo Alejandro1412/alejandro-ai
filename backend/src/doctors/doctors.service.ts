@@ -2,7 +2,9 @@ import { Inject, Injectable } from '@nestjs/common';
 import { and, asc, eq, gte, ilike, inArray, lt, or, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { Database, DB } from '../database/database.module';
-import { appointments, calendarIntegrations, doctors, doctorSchedules, doctorServices, services, timeOff } from '../database/schema';
+import { appointments, calendarIntegrations, doctors, doctorSchedules, doctorServices, services, specialties, timeOff } from '../database/schema';
+import { normalizeHeader, parseCsv, pick } from '../common/utils/csv';
+import { PlanLimitError } from '../common/errors/app-error';
 import { TenantContext, tenantScope, withTenant } from '../database/tenant';
 import { NotFoundError, ValidationError } from '../common/errors/app-error';
 import { likeTerm } from '../common/utils/pagination';
@@ -94,6 +96,78 @@ export class DoctorsService {
     });
     await this.audit.log({ action: 'doctor.created', entityType: 'Doctor', entityId: doctor.id });
     return this.get(doctor.id);
+  }
+
+  /**
+   * Bulk import doctors from CSV. Headers (es/en): titulo|title, nombre|first_name, apellido|last_name,
+   * especialidad|specialty (matched by name), email, telefono|phone, duracion|duration, horario|schedule
+   * (e.g. "lun-vie 08:00-12:00"). Plan limits apply per row.
+   */
+  async importCsv(csv: string, dryRun = false) {
+    const { rows } = parseCsv(csv, 500);
+    const specs = await this.db.select().from(specialties).where(tenantScope(specialties, eq(specialties.clinicId, TenantContext.clinicId())));
+    const findSpec = (name: string) => {
+      const n = normalizeHeader(name);
+      return n ? specs.find((s) => [s.name, s.nameEn ?? '', s.slug].map(normalizeHeader).some((x) => x && (x === n || x.startsWith(n) || n.startsWith(x)))) : undefined;
+    };
+    const DAYS: Record<string, number> = { lun: 1, mon: 1, mar: 2, tue: 2, mie: 3, wed: 3, jue: 4, thu: 4, vie: 5, fri: 5, sab: 6, sat: 6, dom: 7, sun: 7 };
+    const result = { total: rows.length, created: 0, skipped: 0, errors: [] as { row: number; error: string }[] };
+    for (const [i, r] of rows.entries()) {
+      const titleRaw = pick(r, 'titulo', 'title', 'tratamiento');
+      const title = (['Dr.', 'Dra.', 'Lic.', 'Psic.', 'Nut.', 'Ft.'] as const).find((t) => t.toLowerCase().replace('.', '') === titleRaw.toLowerCase().replace('.', '')) ?? 'Dr.';
+      const specName = pick(r, 'especialidad', 'specialty', 'speciality');
+      const spec = specName ? findSpec(specName) : undefined;
+      const parsed = doctorSchema.safeParse({
+        title,
+        firstName: pick(r, 'nombre', 'nombres', 'first_name', 'firstname'),
+        lastName: pick(r, 'apellido', 'apellidos', 'last_name', 'lastname'),
+        email: pick(r, 'email', 'correo') || null,
+        phone: pick(r, 'telefono', 'phone', 'celular') || null,
+        specialtyId: spec?.id ?? null,
+        defaultDurationMinutes: Number(pick(r, 'duracion', 'duration', 'duracion_minutos', 'minutes')) || 30,
+      });
+      if (!parsed.success) {
+        result.errors.push({ row: i + 2, error: parsed.error.issues.map((x) => `${x.path.join('.')}: ${x.message}`).join('; ') });
+        continue;
+      }
+      if (specName && !spec) result.errors.push({ row: i + 2, error: `specialty "${specName}" not found (imported without specialty)` });
+      const [dupe] = await this.db
+        .select({ id: doctors.id })
+        .from(doctors)
+        .where(tenantScope(doctors, eq(doctors.clinicId, TenantContext.clinicId()), ilike(doctors.firstName, parsed.data.firstName), ilike(doctors.lastName, parsed.data.lastName)));
+      if (dupe) {
+        result.skipped++;
+        continue;
+      }
+      // "lun-vie 08:00-12:00; sab 08:00-12:00"
+      const intervals: { dayOfWeek: number; startTime: string; endTime: string }[] = [];
+      for (const part of pick(r, 'horario', 'schedule', 'hours').split(/[;|]/)) {
+        const m = normalizeHeader(part.split(/\s+\d/)[0] ?? '').match(/^([a-z]{3})[a-z]*(?:_([a-z]{3})[a-z]*)?$/);
+        const t = part.match(/(\d{1,2}:\d{2})\s*-\s*(\d{1,2}:\d{2})/);
+        if (!m || !t || !DAYS[m[1]]) continue;
+        const from = DAYS[m[1]];
+        const to = m[2] ? (DAYS[m[2]] ?? from) : from;
+        const pad = (x: string) => x.padStart(5, '0');
+        for (let d = from; d <= to; d++) intervals.push({ dayOfWeek: d, startTime: pad(t[1]), endTime: pad(t[2]) });
+      }
+      if (dryRun) {
+        result.created++;
+        continue;
+      }
+      try {
+        const doc = await this.create(parsed.data);
+        if (intervals.length) await this.setSchedule(doc.id, { intervals });
+        result.created++;
+      } catch (err) {
+        if (err instanceof PlanLimitError) {
+          result.errors.push({ row: i + 2, error: 'plan limit reached — remaining rows not imported' });
+          break;
+        }
+        result.errors.push({ row: i + 2, error: (err as Error).message });
+      }
+    }
+    if (!dryRun) await this.audit.log({ action: 'doctor.imported', entityType: 'Doctor', metadata: { created: result.created, skipped: result.skipped } });
+    return { ...result, dryRun, errors: result.errors.slice(0, 100) };
   }
 
   async update(id: string, dto: Partial<z.infer<typeof doctorSchema>>) {

@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
+import { HiOutlineExclamationTriangle, HiOutlineLockClosed } from 'react-icons/hi2';
 import { useSearchParams } from 'react-router-dom';
 import { Meter } from '@/components/charts/Charts';
 import { Button } from '@/components/ui/Button';
@@ -11,13 +12,26 @@ import { usePreferences, useT } from '@/contexts/PreferencesContext';
 import { api, errorMessage } from '@/lib/api';
 import { fmtDate, fmtMoney } from '@/lib/format';
 import type { Plan } from '@/types';
+import { fmtUsd } from '../admin/format';
+import { SubscriptionBadge } from '../admin/SubscriptionBadge';
+import type { AiBudget } from '../admin/types';
 import { PricingGrid } from '../landing/PricingGrid';
 
 interface Overview {
-  subscription: { status: string; interval: 'MONTHLY' | 'YEARLY'; currentPeriodEnd: string; trialEndsAt: string | null; cancelAtPeriodEnd: boolean; hasPaymentMethod: boolean };
+  subscription: {
+    status: string;
+    interval: 'MONTHLY' | 'YEARLY';
+    currentPeriodEnd: string;
+    trialEndsAt: string | null;
+    cancelAtPeriodEnd: boolean;
+    hasPaymentMethod: boolean;
+    graceEndsAt?: string | null;
+    suspendedReason?: string | null;
+  };
   plan: Plan;
   usage: { doctors: number; users: number; knowledgeSources: number; aiConversationsThisMonth: number };
-  invoices: { id: string; number: string; amountCents: number; currency: string; status: string; issuedAt: string; hostedUrl: string | null }[];
+  invoices: { id: string; number: string; amountCents: number; currency: string; status: string; issuedAt: string; hostedUrl: string | null; description?: string | null }[];
+  aiBudget?: AiBudget;
   provider: 'mock' | 'stripe';
 }
 
@@ -63,15 +77,36 @@ export default function BillingSettings() {
     [t('billing.knowledgeSources'), usage.knowledgeSources, plan.limits.knowledgeSources],
   ];
 
+  const stateNotice =
+    s.status === 'PAST_DUE'
+      ? { tone: 'warning' as const, text: s.graceEndsAt ? t('admin.billing.pastDueGrace', { date: fmtDate(s.graceEndsAt, prefs.lang) }) : t('admin.billing.pastDue') }
+      : s.status === 'SUSPENDED'
+        ? { tone: 'danger' as const, text: t('admin.billing.suspended') }
+        : s.status === 'EXPIRED'
+          ? { tone: 'danger' as const, text: t('admin.billing.expired') }
+          : s.status === 'CANCELED'
+            ? { tone: 'danger' as const, text: t('admin.billing.canceled') }
+            : null;
+  const budget = q.data.aiBudget;
+
   return (
     <>
+      {stateNotice && (
+        <div role={stateNotice.tone === 'danger' ? 'alert' : 'status'} className={stateNotice.tone === 'danger' ? 'flex items-start gap-2.5 rounded-2xl border border-danger/40 bg-danger-soft px-4 py-3 text-sm text-ink' : 'flex items-start gap-2.5 rounded-2xl border border-warning/40 bg-warning-soft px-4 py-3 text-sm text-ink'}>
+          {stateNotice.tone === 'danger' ? <HiOutlineLockClosed className="mt-0.5 shrink-0 text-lg text-danger" aria-hidden="true" /> : <HiOutlineExclamationTriangle className="mt-0.5 shrink-0 text-lg text-warning" aria-hidden="true" />}
+          <p>
+            {stateNotice.text}
+            {s.status === 'SUSPENDED' && s.suspendedReason && <span className="mt-1 block text-ink-2">{t('admin.billing.suspendedReason', { reason: s.suspendedReason })}</span>}
+          </p>
+        </div>
+      )}
       <Card>
         <div className="flex flex-col gap-4 p-5 sm:flex-row sm:items-center">
           <div className="flex-1">
             <p className="text-sm text-ink-3">{t('billing.currentPlan')}</p>
             <div className="mt-1 flex items-center gap-2">
               <h2 className="text-2xl font-bold">{plan.name}</h2>
-              <Badge tone={statusTone(s.status)}>{t(`status.${s.status}` as never)}</Badge>
+              <SubscriptionBadge status={s.status} />
             </div>
             <p className="mt-1 text-sm text-ink-2">
               {fmtMoney(s.interval === 'YEARLY' ? plan.priceYearlyCents : plan.priceMonthlyCents, plan.currency, prefs.lang)}
@@ -110,6 +145,25 @@ export default function BillingSettings() {
         </div>
       </Card>
 
+      {budget && (
+        <Card aria-labelledby="ai-budget">
+          <CardHeader id="ai-budget" title={t('admin.billing.aiBudget')} subtitle={t('admin.billing.aiBudgetBody')} />
+          <div className="space-y-2 px-5 pb-5">
+            <div className="flex justify-between gap-3 text-sm">
+              <span className="tabular-nums">{budget.capUsd === null ? t('admin.billing.spentNoCap', { spent: fmtUsd(budget.spentUsd, prefs.lang) }) : t('admin.billing.spent', { spent: fmtUsd(budget.spentUsd, prefs.lang), cap: fmtUsd(budget.capUsd, prefs.lang) })}</span>
+              {budget.capUsd === null ? <Badge>{t('admin.billing.noLimit')}</Badge> : <span className="tabular-nums text-ink-2">{budget.capUsd > 0 ? Math.round((budget.spentUsd / budget.capUsd) * 100) : 100}%</span>}
+            </div>
+            {budget.capUsd !== null && <Meter value={budget.capUsd > 0 ? (budget.spentUsd / budget.capUsd) * 100 : 100} label={t('admin.billing.aiBudget')} />}
+            {budget.exceeded && (
+              <p role="status" className="flex items-start gap-2 rounded-xl bg-warning-soft px-3 py-2 text-sm text-ink">
+                <HiOutlineExclamationTriangle className="mt-0.5 shrink-0 text-warning" aria-hidden="true" />
+                {t('admin.billing.exceeded')}
+              </p>
+            )}
+          </div>
+        </Card>
+      )}
+
       <Card>
         <CardHeader title={t('billing.changePlan')} />
         <div className="px-5 pb-6">
@@ -120,7 +174,7 @@ export default function BillingSettings() {
       <Card>
         <CardHeader title={t('billing.invoices')} />
         <div className="scrollbar-thin overflow-x-auto px-5 pb-5">
-          <table className="w-full min-w-[480px] text-left text-sm">
+          <table className="w-full min-w-[560px] text-left text-sm">
             <caption className="sr-only">{t('billing.invoices')}</caption>
             <thead className="text-xs text-ink-3">
               <tr>
@@ -129,6 +183,9 @@ export default function BillingSettings() {
                 </th>
                 <th scope="col" className="py-2 font-medium">
                   {t('common.date')}
+                </th>
+                <th scope="col" className="py-2 font-medium">
+                  {t('admin.billing.description')}
                 </th>
                 <th scope="col" className="py-2 text-right font-medium">
                   {t('billing.amount')}
@@ -143,6 +200,7 @@ export default function BillingSettings() {
                 <tr key={i.id} className="border-t border-border">
                   <td className="py-2 font-mono text-xs">{i.hostedUrl ? <a href={i.hostedUrl}>{i.number}</a> : i.number}</td>
                   <td className="py-2">{fmtDate(i.issuedAt, prefs.lang)}</td>
+                  <td className="py-2 pr-3 text-ink-2">{i.description ?? '—'}</td>
                   <td className="py-2 text-right tabular-nums">{fmtMoney(i.amountCents, i.currency, prefs.lang)}</td>
                   <td className="py-2 text-right">
                     <Badge tone={statusTone(i.status)}>{t(`status.${i.status}` as never)}</Badge>

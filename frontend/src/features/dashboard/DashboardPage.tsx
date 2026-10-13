@@ -21,6 +21,8 @@ import { usePreferences, useT } from '@/contexts/PreferencesContext';
 import { api } from '@/lib/api';
 import { doctorName, fmtNumber, fmtRelative, fmtTime, fmtWeekdayShort, fullName } from '@/lib/format';
 import type { Appointment, Handoff } from '@/types';
+import type { ValueReport } from '@/features/reports/valueReport';
+import { AiBriefing } from './AiBriefing';
 
 interface Overview {
   todayAppointments: { value: number; completed: number };
@@ -30,6 +32,7 @@ interface Overview {
   humanHandoffs: { value: number; open: number; delta: number };
   aiResolutionRate: { value: number; delta: number };
   bookingConversion: { value: number };
+  satisfaction?: { positive: number; negative: number; rate: number | null };
 }
 interface Point {
   date: string;
@@ -42,6 +45,7 @@ interface Point {
 }
 interface Insights {
   topQuestions: { intent: string; count: number }[];
+  unansweredQuestions?: { question: string }[];
 }
 
 export default function DashboardPage() {
@@ -66,6 +70,7 @@ export default function DashboardPage() {
     queryFn: () => api.page<Appointment>('/appointments', { ...today, pageSize: 50, order: 'asc' }),
     enabled: can('appointments.read'),
   });
+  const value = useQuery({ queryKey: ['reports', 'value', 'teaser'], queryFn: () => api.get<ValueReport>('/reports/value'), enabled: analytics, staleTime: 5 * 60_000 });
   const queue = useQuery({ queryKey: ['handoffs', 'open'], queryFn: () => api.get<Handoff[]>('/handoffs', { status: 'open' }), enabled: can('conversations.handoff') });
 
   const hour = new Date().getHours();
@@ -119,6 +124,35 @@ export default function DashboardPage() {
             </>
           )}
         </section>
+      )}
+      {analytics && o && <AiBriefing o={o} unanswered={insights.data?.unansweredQuestions?.[0]?.question ?? null} days={Number(days)} />}
+      {analytics && value.data && (
+        <Card aria-labelledby="value-teaser">
+          <div className="flex flex-col gap-4 p-5 sm:flex-row sm:items-center sm:justify-between">
+            <div className="min-w-0">
+              <h2 id="value-teaser" className="text-[0.95rem] font-semibold text-ink">
+                {t('growth.report.teaserTitle')}
+              </h2>
+              <dl className="mt-3 grid grid-cols-3 gap-4 sm:gap-8">
+                {(
+                  [
+                    ['growth.report.teaserConversations', fmtNumber(value.data.current.conversations, prefs.lang)],
+                    ['growth.report.teaserAppointments', fmtNumber(value.data.current.appointmentsByAi, prefs.lang)],
+                    ['growth.report.teaserHours', fmtNumber(Math.round((value.data.current.minutesSaved / 60) * 10) / 10, prefs.lang)],
+                  ] as const
+                ).map(([k, v]) => (
+                  <div key={k} className="min-w-0">
+                    <dt className="truncate text-xs text-ink-3">{t(k)}</dt>
+                    <dd className="font-display text-2xl font-bold tabular-nums text-ink">{v}</dd>
+                  </div>
+                ))}
+              </dl>
+            </div>
+            <ButtonLink to="/reports/value" variant="secondary" size="sm" className="self-start sm:self-center">
+              {t('growth.report.teaserCta')} <HiArrowRight aria-hidden="true" />
+            </ButtonLink>
+          </div>
+        </Card>
       )}
       {overview.isError && <ErrorState error={overview.error} onRetry={() => void overview.refetch()} />}
 

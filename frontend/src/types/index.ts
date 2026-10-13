@@ -8,6 +8,9 @@ export interface Me {
   permissions: string[];
   patientId: string | null;
   subscription: { status: string; planKey: string; planName: string; trialEndsAt: string | null; currentPeriodEnd: string } | null;
+  /** Set when a platform admin is acting as this user (support). */
+  impersonatedBy?: string | null;
+  isPlatformAdmin?: boolean;
 }
 
 export interface Specialty {
@@ -139,6 +142,14 @@ export interface CardAppointment {
   when: string;
   status: string;
   location: string | null;
+  /** Video consultation link (virtual services). */
+  videoUrl?: string | null;
+  /** Deposit payment link while the slot is held. */
+  paymentUrl?: string | null;
+  depositAmount?: string | null;
+  /** Pre-visit intake form. */
+  intakeUrl?: string | null;
+  patientConfirmed?: boolean;
 }
 
 export interface SlotItem {
@@ -157,9 +168,23 @@ export type Attachment =
   | { type: 'services'; items: { id: string; name: string; specialty: string | null; durationMinutes: number; price: string | null }[] }
   | { type: 'handoff'; urgency: string; reason: string }
   | { type: 'emergency' }
-  | { type: 'suggestions'; items: { label: string; message: string }[] };
+  | { type: 'suggestions'; items: { label: string; message: string }[] }
+  | { type: 'consent'; version: string; privacyUrl: string; text: string; acceptLabel: string; declineLabel: string }
+  | { type: 'confirm'; title: string; body: string; action: ChatAction; confirmLabel: string; cancelLabel: string; cancelMessage: string };
 
-export type ChatAction = { type: 'book_slot' | 'confirm_cancel' | 'start_reschedule' | 'reschedule_to' | 'select_doctor'; [k: string]: string | number | null };
+export interface Journey {
+  flow: 'booking' | 'cancel' | 'reschedule';
+  step: string;
+  steps: string[];
+}
+
+/** Live agent progress received while a reply is being produced (streaming). */
+export type AgentStep =
+  | { type: 'status'; stage: 'thinking' | 'policy' | 'llm' | 'validating' }
+  | { type: 'tool'; name: string; phase: 'start' | 'end'; status?: string; latencyMs?: number }
+  | { type: 'policy'; mode: string; reasons: string[] };
+
+export type ChatAction = { type: 'book_slot' | 'confirm_cancel' | 'start_reschedule' | 'reschedule_to' | 'select_doctor' | 'confirm_attendance' | 'give_consent'; [k: string]: string | number | null };
 
 export interface TraceStep {
   type: 'llm' | 'tool' | 'policy' | 'validation';
@@ -202,6 +227,7 @@ export interface Message {
   tokensIn?: number;
   tokensOut?: number;
   latencyMs?: number | null;
+  feedback?: 1 | -1 | null;
   createdAt: string;
 }
 
@@ -257,6 +283,7 @@ export interface TurnResult {
   userMessage: Message;
   assistantMessage: Message | null;
   conversationStatus: string;
+  journey?: Journey | null;
   trace?: TurnTrace;
   welcome?: Message | null;
 }

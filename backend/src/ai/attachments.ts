@@ -20,6 +20,14 @@ export interface CardAppointment {
   when: string;
   status: string;
   location: string | null;
+  /** Video consultation link (virtual services). */
+  videoUrl?: string | null;
+  /** Deposit payment link while the slot is held. */
+  paymentUrl?: string | null;
+  depositAmount?: string | null;
+  /** Pre-visit intake form. */
+  intakeUrl?: string | null;
+  patientConfirmed?: boolean;
 }
 
 export type Attachment =
@@ -41,4 +49,8 @@ export type Attachment =
   | { type: 'services'; items: { id: string; name: string; specialty: string | null; durationMinutes: number; price: string | null }[] }
   | { type: 'handoff'; urgency: string; reason: string }
   | { type: 'emergency' }
-  | { type: 'suggestions'; items: { label: string; message: string }[] };
+  | { type: 'suggestions'; items: { label: string; message: string }[] }
+  /** Asks the patient to confirm an action the assistant understood from free text (never executed until confirmed). */
+  /** Data-processing authorization requested before registering a new patient (versioned text + policy link). */
+  | { type: 'consent'; version: string; privacyUrl: string; text: string; acceptLabel: string; declineLabel: string }
+  | { type: 'confirm'; title: string; body: string; action: Record<string, string | number | null>; confirmLabel: string; cancelLabel: string; cancelMessage: string };

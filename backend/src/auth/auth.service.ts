@@ -2,7 +2,7 @@ import { Inject, Injectable } from '@nestjs/common';
 import * as argon2 from 'argon2';
 import { and, eq } from 'drizzle-orm';
 import { Database, DB } from '../database/database.module';
-import { clinics, memberships, organizations, patients, roles, subscriptions, plans, users } from '../database/schema';
+import { clinics, memberships, organizations, patients, roles, subscriptions, plans, users, consentRecords } from '../database/schema';
 import { TenantContext } from '../database/tenant';
 import { AuditService } from '../audit/audit.service';
 import { ConflictError, ForbiddenError, NotFoundError, UnauthorizedError, ValidationError } from '../common/errors/app-error';
@@ -95,9 +95,14 @@ export class AuthService {
         .select()
         .from(patients)
         .where(and(eq(patients.organizationId, clinic.organizationId), eq(patients.email, dto.email)));
-      if (match) await tx.update(patients).set({ userId: user.id }).where(eq(patients.id, match.id));
-      else
-        await tx.insert(patients).values({
+      const consent = { consentAt: new Date(), consentVersion: clinic.consentVersion, ...(dto.marketingConsent ? { marketingConsentAt: new Date() } : {}) };
+      let patientId: string;
+      if (match) {
+        await tx.update(patients).set({ userId: user.id, ...consent }).where(eq(patients.id, match.id));
+        patientId = match.id;
+      } else {
+        const [created] = await tx.insert(patients).values({
+          ...consent,
           organizationId: clinic.organizationId,
           clinicId: clinic.id,
           userId: user.id,
@@ -107,7 +112,14 @@ export class AuthService {
           phone: dto.phone,
           preferredLanguage: dto.locale,
           source: 'WEB',
-        });
+        }).returning({ id: patients.id });
+        patientId = created.id;
+      }
+      const evidence = { organizationId: clinic.organizationId, clinicId: clinic.id, patientId, version: clinic.consentVersion, channel: 'PORTAL', ip: meta.ip ?? null, userAgent: meta.userAgent?.slice(0, 300) ?? null };
+      await tx.insert(consentRecords).values([
+        { ...evidence, kind: 'DATA_PROCESSING' as const, granted: true },
+        ...(dto.marketingConsent ? [{ ...evidence, kind: 'MARKETING' as const, granted: true }] : []),
+      ]);
       return user.id;
     });
     return this.tokens.issue(await this.buildPayload(userId, clinic.organizationId), meta);
@@ -159,6 +171,8 @@ export class AuthService {
       permissions: [...principal.permissions].sort(),
       patientId: principal.patientId ?? null,
       subscription: sub ?? null,
+      impersonatedBy: principal.impersonatedBy ?? null,
+      isPlatformAdmin: principal.permissions.has('platform.admin'),
     };
   }
 

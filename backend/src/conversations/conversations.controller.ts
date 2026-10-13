@@ -11,6 +11,7 @@ const replySchema = z.object({ content: z.string().trim().min(1).max(4000) });
 const statusSchema = z.object({ status: z.enum(['ACTIVE', 'RESOLVED', 'CLOSED']), returnToAi: z.boolean().default(false) });
 const queueSchema = z.object({ status: z.enum(['open', 'resolved']).default('open') });
 const resolveSchema = z.object({ returnToAi: z.boolean().default(false) });
+export const feedbackSchema = z.object({ value: z.union([z.literal(1), z.literal(-1), z.null()]) });
 
 @ApiTags('Conversations')
 @ApiBearerAuth()
@@ -40,6 +41,13 @@ export class ConversationsController {
   @ApiZodBody(replySchema)
   reply(@Param('id', ParseUUIDPipe) id: string, @Body(zv(replySchema)) dto: z.infer<typeof replySchema>) {
     return this.conversations.staffReply(id, dto.content);
+  }
+
+  @Post('conversations/:id/messages/:messageId/feedback')
+  @RequirePermissions('ai.playground')
+  @ApiZodBody(feedbackSchema)
+  feedback(@Param('id', ParseUUIDPipe) id: string, @Param('messageId', ParseUUIDPipe) messageId: string, @Body(zv(feedbackSchema)) dto: z.infer<typeof feedbackSchema>) {
+    return this.conversations.setFeedback(id, messageId, dto.value);
   }
 
   @Post('conversations/:id/status')

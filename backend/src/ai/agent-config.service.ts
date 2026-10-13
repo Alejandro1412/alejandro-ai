@@ -10,7 +10,7 @@ import { CacheService } from '../jobs/cache.service';
 import type { AgentConfig } from './agent-config';
 import { updateAgentConfigSchema } from './agent-config';
 import type { Catalog } from './policy/intent-classifier';
-import { SUPPORTED_MODELS } from './llm/pricing';
+import { MODEL_ID, SUPPORTED_MODELS } from './llm/pricing';
 
 @Injectable()
 export class AgentConfigService {
@@ -30,7 +30,10 @@ export class AgentConfigService {
     const current = await this.get();
     const provider = patch.provider ?? current.provider;
     const model = patch.model ?? (patch.provider ? SUPPORTED_MODELS[provider as keyof typeof SUPPORTED_MODELS][0] : current.model);
-    if (!SUPPORTED_MODELS[provider as keyof typeof SUPPORTED_MODELS]?.includes(model)) throw new ValidationError(`Model ${model} is not supported for provider ${provider}`);
+    const known = SUPPORTED_MODELS[provider as keyof typeof SUPPORTED_MODELS];
+    if (!known) throw new ValidationError(`Unknown provider ${provider}`);
+    // The mock only has its own model; real providers accept any well-formed model id (new releases).
+    if (provider === 'mock' ? !known.includes(model) : !MODEL_ID.test(model)) throw new ValidationError(`Model ${model} is not valid for provider ${provider}`);
     const [row] = await this.db
       .update(agents)
       .set({ ...patch, provider, model })

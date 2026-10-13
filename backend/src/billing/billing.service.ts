@@ -2,12 +2,13 @@ import { Inject, Injectable, Logger } from '@nestjs/common';
 import { and, asc, desc, eq, sql } from 'drizzle-orm';
 import { env } from '../config/env';
 import { Database, DB, DbExecutor } from '../database/database.module';
-import { doctors, invoices, knowledgeSources, memberships, plans, subscriptions, users, webhookEvents } from '../database/schema';
+import { appointments, doctors, invoices, knowledgeSources, memberships, plans, subscriptions, users, webhookEvents } from '../database/schema';
 import { TenantContext, tenantScope } from '../database/tenant';
 import { NotFoundError, PlanLimitError, ValidationError } from '../common/errors/app-error';
 import { AuditService } from '../audit/audit.service';
 import { UsageService } from '../usage/usage.service';
 import { BillingEvent, BillingProviderFactory } from './billing-provider';
+import { BillingLifecycleService } from './billing-lifecycle.service';
 import { PLAN_CATALOG, TRIAL_DAYS, type PlanDefinition } from './plan-catalog';
 
 function stripePriceIds(key: PlanDefinition['key']): { stripePriceMonthlyId?: string; stripePriceYearlyId?: string } {
@@ -29,12 +30,19 @@ type LimitedResource = 'doctors' | 'users' | 'knowledgeSources';
 @Injectable()
 export class BillingService {
   private readonly logger = new Logger(BillingService.name);
+  private depositHandler?: (organizationId: string, clinicId: string, appointmentId: string, reference: string) => Promise<void>;
+
+  /** Registered by the engagement module: a paid deposit confirms its appointment. */
+  onDepositPaid(handler: (organizationId: string, clinicId: string, appointmentId: string, reference: string) => Promise<void>) {
+    this.depositHandler = handler;
+  }
 
   constructor(
     @Inject(DB) private readonly db: Database,
     private readonly providers: BillingProviderFactory,
     private readonly usage: UsageService,
     private readonly audit: AuditService,
+    private readonly lifecycle: BillingLifecycleService,
   ) {}
 
   /** Idempotently syncs the plan catalog into the DB (seed + boot). */
@@ -103,7 +111,10 @@ export class BillingService {
         trialEndsAt: sub.trialEndsAt,
         cancelAtPeriodEnd: sub.cancelAtPeriodEnd,
         hasPaymentMethod: Boolean(sub.stripeCustomerId),
+        graceEndsAt: sub.graceEndsAt,
+        suspendedReason: sub.suspendedReason,
       },
+      aiBudget: await this.lifecycle.aiBudget(sub.organizationId),
       plan,
       usage,
       invoices: invoiceRows,
@@ -135,7 +146,7 @@ export class BillingService {
     if (counts[resource] >= limit) throw new PlanLimitError(resource, { limit, plan: plan.key });
   }
 
-  async hasFeature(feature: 'whatsapp' | 'customBranding' | 'apiAccess'): Promise<boolean> {
+  async hasFeature(feature: 'whatsapp' | 'customBranding' | 'apiAccess' | 'voice' | 'campaigns'): Promise<boolean> {
     const { plan } = await this.currentSubscription();
     return Boolean(plan.limits[feature]);
   }
@@ -203,6 +214,9 @@ export class BillingService {
         currentPeriodEnd: periodEnd,
         trialEndsAt: null,
         cancelAtPeriodEnd: false,
+        graceEndsAt: null,
+        dunningStage: 0,
+        suspendedReason: null,
         ...(opts.stripeCustomerId ? { stripeCustomerId: opts.stripeCustomerId } : {}),
         ...(opts.stripeSubscriptionId ? { stripeSubscriptionId: opts.stripeSubscriptionId } : {}),
       })
@@ -222,6 +236,7 @@ export class BillingService {
       stripeInvoiceId: opts.stripeInvoiceId,
       hostedUrl: opts.hostedUrl,
     });
+    await this.lifecycle.invalidate(organizationId);
     await TenantContext.run({ organizationId }, () =>
       this.audit.log({ action: 'billing.plan_changed', entityType: 'Subscription', entityId: sub.id, metadata: { plan: plan.key, interval }, organizationId }),
     );
@@ -286,6 +301,14 @@ export class BillingService {
     const obj = event.data as Record<string, unknown> & { metadata?: Record<string, string> };
     switch (event.type) {
       case 'checkout.session.completed': {
+        if (obj.metadata?.kind === 'deposit') {
+          const appointmentId = obj.metadata.appointmentId;
+          const [appt] = await this.db.select({ clinicId: appointments.clinicId, organizationId: appointments.organizationId }).from(appointments).where(eq(appointments.id, appointmentId));
+          if (!appt || appt.organizationId !== obj.metadata.organizationId) throw new ValidationError('Deposit for unknown appointment');
+          if (obj.payment_status && obj.payment_status !== 'paid') break;
+          await this.depositHandler?.(appt.organizationId, appt.clinicId, appointmentId, String(obj.id));
+          break;
+        }
         const orgId = obj.metadata?.organizationId ?? (obj.client_reference_id as string | undefined);
         const planKey = obj.metadata?.planKey;
         if (!orgId || !planKey) throw new ValidationError('checkout session without organization metadata');
@@ -315,7 +338,13 @@ export class BillingService {
         break;
       }
       case 'invoice.payment_failed': {
-        await this.db.update(subscriptions).set({ status: 'PAST_DUE' }).where(eq(subscriptions.stripeSubscriptionId, obj.subscription as string));
+        const graceEndsAt = new Date(Date.now() + env().BILLING_GRACE_DAYS * 86_400_000);
+        const [sub] = await this.db
+          .update(subscriptions)
+          .set({ status: 'PAST_DUE', graceEndsAt: sql`coalesce(${subscriptions.graceEndsAt}, ${graceEndsAt.toISOString()}::timestamptz)` })
+          .where(eq(subscriptions.stripeSubscriptionId, obj.subscription as string))
+          .returning();
+        if (sub) await this.lifecycle.invalidate(sub.organizationId);
         break;
       }
       default:

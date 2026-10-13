@@ -1,5 +1,5 @@
 import { zodResolver } from '@hookform/resolvers/zod';
-import { useState } from 'react';
+import { useId, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { z } from 'zod';
@@ -20,6 +20,9 @@ const schema = z.object({
     .min(10)
     .regex(/[A-Za-z]/)
     .regex(/\d/),
+  // Required by POST /auth/patient/register: explicit, informed authorization (Ley 1581 / GDPR-style).
+  acceptPrivacy: z.boolean().refine((v) => v, { message: 'privacy' }),
+  marketingConsent: z.boolean(),
 });
 type Form = z.infer<typeof schema>;
 
@@ -31,13 +34,14 @@ export default function PatientRegisterPage() {
   const [params] = useSearchParams();
   const clinicSlug = params.get('clinic') ?? 'novacare';
   const [error, setError] = useState<string | null>(null);
-  const { register, handleSubmit, formState } = useForm<Form>({ resolver: zodResolver(schema) });
+  const privacyErrId = useId();
+  const { register, handleSubmit, formState } = useForm<Form>({ resolver: zodResolver(schema), defaultValues: { acceptPrivacy: false, marketingConsent: false } });
   const e = formState.errors;
 
   const onSubmit = async (v: Form) => {
     setError(null);
     try {
-      const res = await api.post<{ accessToken: string }>('/auth/patient/register', { ...v, clinicSlug, locale: prefs.lang }, { anonymous: true });
+      const res = await api.post<{ accessToken: string }>('/auth/patient/register', { ...v, acceptPrivacy: true, marketingConsent: v.marketingConsent, clinicSlug, locale: prefs.lang }, { anonymous: true });
       tokenStore.set(res.accessToken);
       await reload();
       nav('/portal', { replace: true });
@@ -72,10 +76,52 @@ export default function PatientRegisterPage() {
         <Field label={t('auth.password')} hint={t('auth.passwordHint')} error={e.password && t('auth.passwordHint')} required>
           <Input type="password" autoComplete="new-password" {...register('password')} />
         </Field>
+        <div className="space-y-3 rounded-2xl border border-border bg-surface-2/50 p-4">
+          <div>
+            <label className="flex cursor-pointer items-start gap-3 text-sm text-ink">
+              <input
+                type="checkbox"
+                className="mt-0.5 h-5 w-5 shrink-0 rounded border-border-strong accent-[rgb(var(--primary))]"
+                aria-required="true"
+                aria-invalid={e.acceptPrivacy ? true : undefined}
+                aria-describedby={e.acceptPrivacy ? privacyErrId : undefined}
+                {...register('acceptPrivacy')}
+              />
+              <span>
+                {t('pub.register.privacyBefore')}{' '}
+                <Link to={`/legal/privacy?clinic=${encodeURIComponent(clinicSlug)}`} target="_blank" rel="noopener noreferrer" className="font-semibold text-primary hover:underline">
+                  {t('pub.register.privacyLink')}
+                  <span className="sr-only"> {t('pub.chat.newTab')}</span>
+                </Link>{' '}
+                {t('pub.register.privacyAfter')}
+                <span className="ml-0.5 text-danger" aria-hidden="true">
+                  *
+                </span>
+              </span>
+            </label>
+            {e.acceptPrivacy && (
+              <p id={privacyErrId} role="alert" className="mt-1.5 pl-8 text-xs font-medium text-danger">
+                {t('pub.register.privacyRequired')}
+              </p>
+            )}
+          </div>
+          <label className="flex cursor-pointer items-start gap-3 text-sm text-ink-2">
+            <input type="checkbox" className="mt-0.5 h-5 w-5 shrink-0 rounded border-border-strong accent-[rgb(var(--primary))]" {...register('marketingConsent')} />
+            <span>{t('pub.register.marketing')}</span>
+          </label>
+        </div>
         <Button type="submit" size="lg" className="w-full" loading={formState.isSubmitting}>
           {t('auth.createAccount')}
         </Button>
-        <p className="text-center text-xs text-ink-3">{t('auth.termsNote')}</p>
+        <p className="text-center text-xs text-ink-3">
+          <Link to="/legal/terms" target="_blank" rel="noopener noreferrer" className="hover:text-ink hover:underline">
+            {t('pub.legal.terms')}
+          </Link>
+          {' · '}
+          <Link to={`/legal/privacy?clinic=${encodeURIComponent(clinicSlug)}`} target="_blank" rel="noopener noreferrer" className="hover:text-ink hover:underline">
+            {t('pub.legal.privacy')}
+          </Link>
+        </p>
       </form>
       <p className="mt-6 text-center text-sm text-ink-2">
         {t('auth.haveAccount')}{' '}

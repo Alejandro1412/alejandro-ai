@@ -4,7 +4,7 @@ import { env } from '../config/env';
 import { ROLE_DEFINITIONS } from '../rbac/permissions';
 import { TenantContext } from '../database/tenant';
 
-export type QueueName = 'knowledge-ingestion' | 'notifications' | 'reminders';
+export type QueueName = 'knowledge-ingestion' | 'notifications' | 'reminders' | 'waitlist' | 'engagement' | 'billing-lifecycle' | 'campaigns';
 
 export interface TenantJob {
   organizationId: string;

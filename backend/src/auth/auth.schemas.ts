@@ -31,6 +31,9 @@ export const patientRegisterSchema = z.object({
   phone: z.string().trim().min(7).max(20).optional(),
   password,
   locale: z.enum(['es', 'en']).default('es'),
+  /** Must be true: the patient accepts the clinic's privacy notice. */
+  acceptPrivacy: z.literal(true, { message: 'You must accept the privacy policy' }),
+  marketingConsent: z.boolean().default(false),
 });
 
 export const updateProfileSchema = z.object({

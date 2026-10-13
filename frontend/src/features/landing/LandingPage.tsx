@@ -21,6 +21,7 @@ import { PricingGrid } from './PricingGrid';
 import { AgentDemo } from './sections/AgentDemo';
 import { FeatureGallery, type Feature } from './sections/FeatureGallery';
 import { Hero } from './sections/Hero';
+import { LandingChatWidget } from './sections/LandingChatWidget';
 import { LandingHeader } from './sections/LandingHeader';
 import { StackCards, type StackItem } from './sections/StackCards';
 
@@ -169,6 +170,8 @@ export default function LandingPage() {
           </div>
         </section>
       </main>
+
+      <LandingChatWidget />
 
       <footer className="border-t border-border">
         <div className="mx-auto flex max-w-7xl flex-col items-center justify-between gap-4 px-4 py-10 text-sm text-ink-3 sm:flex-row sm:px-6">

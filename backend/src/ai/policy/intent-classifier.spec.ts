@@ -67,3 +67,37 @@ describe('language detection', () => {
     expect(detectLanguage('ok', 'en')).toBe('en');
   });
 });
+
+describe('conversational intents', () => {
+  it.each([
+    ['¿Qué puedes hacer?', 'capabilities'],
+    ['what can you do?', 'capabilities'],
+    ['Hola, ¿qué puedes hacer?', 'capabilities'],
+    ['Hola', 'greeting'],
+    ['¿Cómo me preparo para la cita?', 'preparation'],
+    ['What should I bring?', 'preparation'],
+    ['sí', 'affirm'],
+    ['no gracias', 'thanks'],
+    ['no', 'deny'],
+    ['muchas gracias por todo', 'thanks'],
+  ])('%s → %s', (text, intent) => expect(c(text).intent).toBe(intent));
+
+  it.each([
+    ['¿Cómo estás?', 'how_are_you'],
+    ['¿Quién eres?', 'who_are_you'],
+    ['¿Eres un robot?', 'are_you_bot'],
+    ['Cuéntame un chiste', 'joke'],
+    ['eres muy útil', 'compliment'],
+    ['no me entiendes', 'frustration'],
+    ['ok', 'ack'],
+  ])('small talk: %s → %s', (text, topic) => {
+    const r = c(text);
+    expect(r.intent).toBe('small_talk');
+    expect(r.entities.topic).toBe(topic);
+  });
+
+  it('small talk never hides safety signals', () => {
+    expect(c('cómo estás, tengo un dolor muy fuerte en el pecho').intent).toBe('emergency');
+    expect(c('eres un robot? quiero hablar con una persona').intent).toBe('human');
+  });
+});

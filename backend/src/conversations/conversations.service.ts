@@ -16,7 +16,7 @@ export const listConversationsSchema = paginationSchema.extend({
   patientId: z.string().uuid().optional(),
 });
 
-export type Channel = 'WEB' | 'PORTAL' | 'PLAYGROUND' | 'WHATSAPP';
+export type Channel = 'WEB' | 'PORTAL' | 'PLAYGROUND' | 'WHATSAPP' | 'PHONE';
 export type NewMessage = Omit<typeof messages.$inferInsert, 'organizationId' | 'conversationId' | 'id' | 'createdAt'>;
 
 @Injectable()
@@ -142,6 +142,18 @@ export class ConversationsService {
     const [row] = await this.db.insert(messages).values(withTenant({ ...msg, conversationId })).returning();
     await this.db.update(conversations).set({ lastMessageAt: new Date() }).where(tenantScope(conversations, eq(conversations.id, conversationId)));
     this.events.emit('message.created', { conversationId, messageId: row.id, role: row.role });
+    return row;
+  }
+
+  /** Thumbs up/down on an assistant reply (patients, webchat visitors or staff in the playground). */
+  async setFeedback(conversationId: string, messageId: string, value: 1 | -1 | null) {
+    const [row] = await this.db
+      .update(messages)
+      .set({ feedback: value, feedbackAt: value === null ? null : new Date() })
+      .where(tenantScope(messages, eq(messages.id, messageId), eq(messages.conversationId, conversationId), eq(messages.role, 'ASSISTANT')))
+      .returning({ id: messages.id, feedback: messages.feedback });
+    if (!row) throw new NotFoundError('Message', messageId);
+    if (value === -1) this.events.emit('message.feedback', { conversationId, messageId, value });
     return row;
   }
 

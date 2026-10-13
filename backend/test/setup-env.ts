@@ -14,3 +14,4 @@ process.env.WHATSAPP_VERIFY_TOKEN = 'test-verify-token';
 process.env.WHATSAPP_DEFAULT_CLINIC_SLUG = 'novacare';
 process.env.RATE_LIMIT_MAX = '10000';
 process.env.AUTH_RATE_LIMIT_MAX = '10000';
+process.env.PUBLIC_CHAT_RATE_LIMIT_MAX = '1000';

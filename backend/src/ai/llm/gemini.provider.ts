@@ -3,8 +3,8 @@ import { CircuitBreaker, fetchJson, isRetryableHttp, retry } from '../../common/
 import type { ChatMessage, JsonSchema, LLMProvider, LLMRequest, LLMResponse } from './llm-provider';
 
 type Part =
-  | { text: string }
-  | { functionCall: { name: string; args: Record<string, unknown> } }
+  | { text: string; thoughtSignature?: string; thought?: boolean }
+  | { functionCall: { name: string; args: Record<string, unknown> }; thoughtSignature?: string }
   | { functionResponse: { name: string; response: Record<string, unknown> } };
 
 interface GeminiResponse {
@@ -52,6 +52,11 @@ export class GeminiProvider implements LLMProvider {
         if (last?.role === 'user' && last.parts.every((p) => 'functionResponse' in p)) last.parts.push(part);
         else out.push({ role: 'user', parts: [part] });
       } else if (m.role === 'assistant') {
+        // Gemini 3 requires the model's own parts (with thought signatures) to be sent back unchanged.
+        if (m.raw?.provider === 'gemini' && Array.isArray(m.raw.content)) {
+          out.push({ role: 'model', parts: m.raw.content as Part[] });
+          continue;
+        }
         const parts: Part[] = [];
         if (m.content) parts.push({ text: m.content });
         for (const c of m.toolCalls ?? []) parts.push({ functionCall: { name: c.name, args: c.arguments } });
@@ -92,7 +97,7 @@ export class GeminiProvider implements LLMProvider {
     );
     const parts = res.candidates?.[0]?.content?.parts ?? [];
     const text = parts
-      .filter((p): p is { text: string } => 'text' in p)
+      .filter((p): p is { text: string } => 'text' in p && !(p as { thought?: boolean }).thought)
       .map((p) => p.text)
       .join('\n');
     const toolCalls = parts
@@ -104,6 +109,7 @@ export class GeminiProvider implements LLMProvider {
       usage: { inputTokens: res.usageMetadata?.promptTokenCount ?? 0, outputTokens: res.usageMetadata?.candidatesTokenCount ?? 0 },
       model: res.modelVersion ?? req.model,
       finishReason: toolCalls.length ? 'tool_calls' : res.candidates?.[0]?.finishReason === 'MAX_TOKENS' ? 'length' : 'stop',
+      raw: { provider: 'gemini', content: parts },
     };
   }
 }

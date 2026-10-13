@@ -18,6 +18,16 @@ export class CacheService implements OnModuleDestroy {
     this.redis?.on('error', (e) => this.logger.warn(`Redis cache error: ${e.message}`));
   }
 
+  /** 'up' | 'down' | 'memory' (no Redis configured). */
+  async ping(): Promise<'up' | 'down' | 'memory'> {
+    if (!this.redis) return 'memory';
+    try {
+      return (await Promise.race([this.redis.ping(), new Promise<string>((_, rej) => setTimeout(() => rej(new Error('timeout')), 1500))])) === 'PONG' ? 'up' : 'down';
+    } catch {
+      return 'down';
+    }
+  }
+
   async get<T>(key: string): Promise<T | null> {
     try {
       const raw = this.redis ? await this.redis.get(key) : this.memGet(key);

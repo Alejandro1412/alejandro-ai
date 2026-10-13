@@ -1,15 +1,17 @@
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { z } from 'zod';
 import { Button } from '@/components/ui/Button';
 import { Field, Input, Select, Textarea } from '@/components/ui/Field';
 import { Modal } from '@/components/ui/Overlay';
 import { useToast } from '@/components/ui/Toast';
-import { useT } from '@/contexts/PreferencesContext';
+import { usePreferences, useT } from '@/contexts/PreferencesContext';
 import { api, errorMessage } from '@/lib/api';
+import { fmtDate } from '@/lib/format';
 import type { Patient } from '@/types';
+import type { PatientV3 } from './types';
 
 export const patientFormSchema = z.object({
   firstName: z.string().trim().min(1),
@@ -25,8 +27,13 @@ export const patientFormSchema = z.object({
 });
 type Form = z.infer<typeof patientFormSchema>;
 
-export function PatientFormDialog({ open, onClose, patient, onSaved }: { open: boolean; onClose: () => void; patient?: Patient; onSaved?: (p: Patient) => void }) {
+export function PatientFormDialog({ open, onClose, patient, onSaved }: { open: boolean; onClose: () => void; patient?: PatientV3; onSaved?: (p: Patient) => void }) {
   const t = useT();
+  const { prefs } = usePreferences();
+  const initialConsent = Boolean(patient?.consentAt);
+  const initialMarketing = Boolean(patient?.marketingConsentAt);
+  const [consent, setConsent] = useState(initialConsent);
+  const [marketing, setMarketing] = useState(initialMarketing);
   const toast = useToast();
   const qc = useQueryClient();
   const defaults = (): Form => ({
@@ -43,7 +50,11 @@ export function PatientFormDialog({ open, onClose, patient, onSaved }: { open: b
   });
   const { register, handleSubmit, reset, formState } = useForm<Form>({ resolver: zodResolver(patientFormSchema), defaultValues: defaults() });
   useEffect(() => {
-    if (open) reset(defaults());
+    if (open) {
+      reset(defaults());
+      setConsent(initialConsent);
+      setMarketing(initialMarketing);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, patient]);
 
@@ -61,6 +72,9 @@ export function PatientFormDialog({ open, onClose, patient, onSaved }: { open: b
           .split(',')
           .map((x) => x.trim())
           .filter(Boolean),
+        // Consent is only sent when it changes (edit) or when granted (create), so history stays meaningful.
+        ...(patient ? (consent !== initialConsent ? { consent } : {}) : consent ? { consent: true } : {}),
+        ...(patient ? (marketing !== initialMarketing ? { marketingConsent: marketing } : {}) : marketing ? { marketingConsent: true } : {}),
       };
       return patient ? api.patch<Patient>(`/patients/${patient.id}`, body) : api.post<Patient>('/patients', body);
     },
@@ -132,6 +146,22 @@ export function PatientFormDialog({ open, onClose, patient, onSaved }: { open: b
         <Field label={t('appointments.administrativeNotes')} hint={t('appointments.notesHint')} className="sm:col-span-2">
           <Textarea rows={3} {...register('notes')} />
         </Field>
+        <fieldset className="space-y-2.5 rounded-xl border border-border p-3 sm:col-span-2">
+          <legend className="px-1 text-sm font-semibold">{t('admin.privacy.title')}</legend>
+          <label className="flex items-start gap-2.5 text-sm text-ink">
+            <input type="checkbox" checked={consent} onChange={(ev) => setConsent(ev.target.checked)} className="mt-0.5 h-4 w-4 shrink-0 accent-[rgb(var(--primary))]" aria-describedby="consent-hint" />
+            <span>
+              {t('admin.privacy.consentLabel')}
+              <span id="consent-hint" className="block text-xs text-ink-3">
+                {patient?.consentAt ? t('admin.privacy.consentSince', { date: fmtDate(patient.consentAt, prefs.lang) }) : t('admin.privacy.consentHint')}
+              </span>
+            </span>
+          </label>
+          <label className="flex items-start gap-2.5 text-sm text-ink">
+            <input type="checkbox" checked={marketing} onChange={(ev) => setMarketing(ev.target.checked)} className="mt-0.5 h-4 w-4 shrink-0 accent-[rgb(var(--primary))]" />
+            <span>{t('admin.privacy.marketingLabel')}</span>
+          </label>
+        </fieldset>
       </form>
     </Modal>
   );

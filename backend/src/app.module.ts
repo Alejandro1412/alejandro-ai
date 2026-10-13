@@ -9,6 +9,7 @@ import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
 import { ResponseInterceptor } from './common/interceptors/response.interceptor';
 import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
 import { PermissionsGuard } from './common/guards/permissions.guard';
+import { SubscriptionGuard } from './common/guards/subscription.guard';
 import { RequestContextMiddleware } from './common/middleware/context.middleware';
 import { AuthModule } from './auth/auth.module';
 import { ClinicsModule } from './clinics/clinics.module';
@@ -28,6 +29,9 @@ import { AnalyticsModule } from './analytics/analytics.module';
 import { WhatsAppModule } from './whatsapp/whatsapp.module';
 import { PortalModule } from './portal/portal.module';
 import { PublicModule } from './public/public.module';
+import { EngagementModule } from './engagement/engagement.module';
+import { VoiceModule } from './voice/voice.module';
+import { AdminModule } from './admin/admin.module';
 
 @Module({
   imports: [
@@ -51,12 +55,16 @@ import { PublicModule } from './public/public.module';
     WhatsAppModule,
     PortalModule,
     PublicModule,
+    EngagementModule,
+    VoiceModule,
+    AdminModule,
   ],
   controllers: [AuditController, HealthController],
   providers: [
     { provide: APP_GUARD, useClass: ThrottlerGuard },
     { provide: APP_GUARD, useClass: JwtAuthGuard },
     { provide: APP_GUARD, useClass: PermissionsGuard },
+    { provide: APP_GUARD, useClass: SubscriptionGuard },
     { provide: APP_INTERCEPTOR, useClass: ResponseInterceptor },
     { provide: APP_FILTER, useClass: AllExceptionsFilter },
   ],

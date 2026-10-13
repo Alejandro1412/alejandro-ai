@@ -15,7 +15,9 @@ function connect(token: string): Socket {
 }
 
 const EVENT_QUERIES: Record<string, string[][]> = {
-  'appointment.changed': [['appointments'], ['analytics'], ['calendar'], ['doctors'], ['portal']],
+  'appointment.changed': [['appointments'], ['analytics'], ['calendar'], ['doctors'], ['portal'], ['waitlist']],
+  'waitlist.changed': [['waitlist'], ['reports']],
+  'campaign.sent': [['campaigns']],
   'conversation.updated': [['conversations'], ['analytics']],
   'message.created': [['conversations'], ['portal-chat']],
   'handoff.created': [['handoffs'], ['conversations'], ['analytics']],

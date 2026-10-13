@@ -23,8 +23,18 @@ export class LLMFactory {
     return { mock: true, openai: Boolean(e.OPENAI_API_KEY), anthropic: Boolean(e.ANTHROPIC_API_KEY), gemini: Boolean(e.GEMINI_API_KEY) };
   }
 
+  /**
+   * Clinics on the built-in "mock" brain are upgraded to the platform default provider
+   * (AI_DEFAULT_PROVIDER) as soon as that provider has a key — so one env var turns every
+   * tenant's assistant into a real LLM without editing each clinic.
+   */
   resolve(requested: string, model: string): { provider: LLMProvider; model: string; fallback: boolean } {
-    const name = (['mock', 'openai', 'anthropic', 'gemini'].includes(requested) ? requested : 'mock') as ProviderName;
+    let name = (['mock', 'openai', 'anthropic', 'gemini'].includes(requested) ? requested : 'mock') as ProviderName;
+    const platformDefault = env().AI_DEFAULT_PROVIDER as ProviderName;
+    if (name === 'mock' && platformDefault !== 'mock' && this.availability()[platformDefault]) {
+      name = platformDefault;
+      model = '';
+    }
     if (!this.availability()[name]) return { provider: this.get('mock'), model: SUPPORTED_MODELS.mock[0], fallback: name !== 'mock' };
     return { provider: this.get(name), model: model || SUPPORTED_MODELS[name][0], fallback: false };
   }

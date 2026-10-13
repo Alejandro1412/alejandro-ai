@@ -1,7 +1,7 @@
 import { Inject, Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { and, count, desc, eq, gte, inArray, isNull, lte, sql } from 'drizzle-orm';
 import { Database, DB } from '../database/database.module';
-import { agents, appointments, clinics, doctors, memberships, notifications, patients, roles } from '../database/schema';
+import { agents, appointments, clinics, doctors, memberships, notifications, patients, roles, users } from '../database/schema';
 import { TenantContext, tenantScope, withTenant } from '../database/tenant';
 import { NotFoundError } from '../common/errors/app-error';
 import { doctorDisplayName, formatWhen, personName } from '../common/utils/time';
@@ -11,6 +11,10 @@ import { EventsService } from '../realtime/events.service';
 import { UsageService } from '../usage/usage.service';
 import { ROLE_DEFINITIONS } from '../rbac/permissions';
 import { ChannelProviders } from './providers/channel-providers';
+import { WhatsAppChannelsService } from './providers/whatsapp-channels.service';
+import { PushService } from './push.service';
+import { ActionTokensService } from '../actions/action-tokens.service';
+import { env } from '../config/env';
 import { NotificationType, renderTemplate, TemplateVars } from './templates';
 
 type Channel = 'IN_APP' | 'EMAIL' | 'WHATSAPP' | 'SMS';
@@ -30,6 +34,9 @@ export class NotificationsService implements OnModuleInit {
     private readonly events: EventsService,
     private readonly providers: ChannelProviders,
     private readonly usage: UsageService,
+    private readonly push: PushService,
+    private readonly whatsappChannels: WhatsAppChannelsService,
+    private readonly tokens: ActionTokensService,
   ) {}
 
   onModuleInit(): void {
@@ -57,6 +64,28 @@ export class NotificationsService implements OnModuleInit {
       .values(userIds.map((userId) => withTenant({ clinicId, userId, type, channel: 'IN_APP' as const, title, body, data, status: 'SENT' as const, sentAt: new Date() })))
       .returning({ id: notifications.id, userId: notifications.userId });
     this.events.emit('notification.created', { type, title, body, data, count: rows.length });
+    const url = data.appointmentId ? `/appointments/${String(data.appointmentId)}` : data.conversationId ? `/conversations/${String(data.conversationId)}` : '/notifications';
+    await this.push.sendToUsers(userIds, { title, body: body.slice(0, 180), url, tag: type }).catch((e: Error) => this.logger.warn(`Push failed: ${e.message}`));
+  }
+
+  /** Email to staff with the given roles (monthly report, billing notices). Queued like any external delivery. */
+  async emailStaff(type: NotificationType, vars: TemplateVars, roleKeys: string[] = ['CLINIC_ADMIN']) {
+    const staff = await this.db
+      .select({ userId: memberships.userId, email: users.email, locale: users.locale })
+      .from(memberships)
+      .innerJoin(roles, eq(roles.id, memberships.roleId))
+      .innerJoin(users, eq(users.id, memberships.userId))
+      .where(and(eq(memberships.organizationId, TenantContext.orgId()), inArray(roles.key, roleKeys), eq(memberships.status, 'ACTIVE')));
+    const clinicId = TenantContext.current()?.clinicId ?? null;
+    for (const s of staff) {
+      const { title, body } = renderTemplate(type, s.locale, vars);
+      const [row] = await this.db
+        .insert(notifications)
+        .values(withTenant({ clinicId, userId: s.userId, type, channel: 'EMAIL' as const, recipient: s.email, title, body, data: {} }))
+        .returning({ id: notifications.id });
+      await this.queue.enqueue<DeliveryJob>('notifications', { organizationId: TenantContext.orgId(), clinicId: clinicId ?? undefined, notificationId: row.id });
+    }
+    return staff.length;
   }
 
   /** Patient-facing notification over the configured external channels (queued). */
@@ -93,8 +122,9 @@ export class NotificationsService implements OnModuleInit {
         await this.providers.sms.send({ to: n.recipient, body: n.body });
         await this.usage.record({ kind: 'SMS_MESSAGE', provider: this.providers.sms.name });
       } else if (n.channel === 'WHATSAPP') {
-        await this.providers.whatsapp.sendMessage(n.recipient, `*${n.title}*\n${n.body}`);
-        await this.usage.record({ kind: 'WHATSAPP_MESSAGE', provider: this.providers.whatsapp.name });
+        const wa = await this.whatsappChannels.provider();
+        await wa.sendMessage(n.recipient, `*${n.title}*\n${n.body}`);
+        await this.usage.record({ kind: 'WHATSAPP_MESSAGE', provider: wa.name });
       }
       await this.db.update(notifications).set({ status: 'SENT', sentAt: new Date(), error: null }).where(eq(notifications.id, n.id));
     } catch (err) {
@@ -142,12 +172,13 @@ export class NotificationsService implements OnModuleInit {
               .returning({ id: appointments.id });
             if (!claimed.length) continue;
             const [p] = await this.db.select().from(patients).where(eq(patients.id, appt.patientId));
+            const lang = p?.preferredLanguage ?? 'es';
             await this.notifyPatient(
               'APPOINTMENT_REMINDER',
               appt.patientId,
-              { doctorName: doctorDisplayName(doctor), when: formatWhen(appt.startTime, clinic.timezone, p?.preferredLanguage ?? 'es'), clinicName: clinic.name },
+              { doctorName: doctorDisplayName(doctor), when: formatWhen(appt.startTime, clinic.timezone, lang), clinicName: clinic.name, extra: await this.reminderExtras(appt, lang) },
               [...rules.onBooking.filter((c) => c !== 'IN_APP'), 'IN_APP'],
-              { appointmentId: appt.id },
+              { appointmentId: appt.id, interactive: true },
             );
             sent++;
           }
@@ -171,12 +202,35 @@ export class NotificationsService implements OnModuleInit {
     await this.notifyPatient(
       'APPOINTMENT_REMINDER',
       row.patient.id,
-      { doctorName: doctorDisplayName(row.doctor), when: formatWhen(row.appt.startTime, row.clinic.timezone, row.patient.preferredLanguage), clinicName: row.clinic.name },
+      {
+        doctorName: doctorDisplayName(row.doctor),
+        when: formatWhen(row.appt.startTime, row.clinic.timezone, row.patient.preferredLanguage),
+        clinicName: row.clinic.name,
+        extra: await this.reminderExtras(row.appt, row.patient.preferredLanguage),
+      },
       channels,
-      { appointmentId },
+      { appointmentId, interactive: true },
     );
     await this.db.update(appointments).set({ reminderSentAt: new Date() }).where(eq(appointments.id, appointmentId));
     return { sent: true, channels, patient: personName(row.patient) };
+  }
+
+  /**
+   * One-tap links in reminders (confirm / cancel; video link for virtual visits). WhatsApp recipients can
+   * also answer 1 / 2 / 3 — WhatsAppService maps the reply to the reminded appointment.
+   */
+  private async reminderExtras(appt: typeof appointments.$inferSelect, lang: string) {
+    const en = lang === 'en';
+    const lines: string[] = [];
+    if (appt.videoUrl) lines.push(`${en ? 'Video consultation' : 'Consulta por video'}: ${appt.videoUrl}`);
+    if (!appt.patientConfirmedAt) {
+      const confirm = await this.tokens.issue('confirm', { appointmentId: appt.id }, { expiresAt: appt.startTime });
+      const cancel = await this.tokens.issue('cancel', { appointmentId: appt.id }, { expiresAt: appt.startTime });
+      lines.push(`${en ? 'Confirm' : 'Confirmar'}: ${confirm.url}`, `${en ? 'Cancel' : 'Cancelar'}: ${cancel.url}`);
+      lines.push(en ? 'On WhatsApp reply 1 to confirm, 2 to reschedule or 3 to cancel.' : 'Por WhatsApp responde 1 para confirmar, 2 para reprogramar o 3 para cancelar.');
+    }
+    void env;
+    return lines.join('\n') || undefined;
   }
 
   // ── Inbox API ──

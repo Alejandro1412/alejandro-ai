@@ -103,3 +103,14 @@ Plan limits (doctors, users, AI conversations, knowledge sources, WhatsApp) are 
 - **Logs:** Nest logs to stdout; every request has an `X-Request-Id` (echoed in the response and stored in audit entry metadata).
 - **Backups:** daily Postgres snapshots + PITR; test restores.
 - **Scaling knobs:** `DATABASE_POOL_MAX`, backend replicas, BullMQ concurrency, `AI_MAX_TOOL_ITERATIONS`, `RATE_LIMIT_*`.
+
+## v3 operations checklist
+
+- Set `TRUST_PROXY=1` behind Render/Vercel/nginx.
+- Optional: `SENTRY_DSN`, `VAPID_*` (web push), `TWILIO_AUTH_TOKEN` (voice), `VIDEO_BASE_URL`.
+- Stripe: add the `checkout.session.completed` event (used for deposits too) to the webhook endpoint.
+- WhatsApp multi-tenant: one Meta app webhook for the platform; each clinic saves its Phone number ID (and optionally its own token) in Settings → Integrations.
+- Twilio voice: number → *A call comes in* → `POST {API_URL}/api/webhooks/voice/{slug}/incoming`.
+- Backups: `scripts/backup.sh` from cron/CI, or `docker compose --profile backup up -d`; test `scripts/restore.sh` regularly.
+- Health: monitor `GET /api/health/deep`.
+- Render free instances sleep: first requests/webhooks can take ~50 s and background jobs (reminders, waitlist offers, billing sweep) pause while asleep — use an always-on instance for production.

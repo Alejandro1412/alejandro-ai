@@ -6,7 +6,7 @@ import { tenantScope } from '../database/tenant';
 import { NotFoundError } from '../common/errors/app-error';
 import { ConversationsService, type Channel } from '../conversations/conversations.service';
 import { AgentConfigService } from './agent-config.service';
-import { OrchestratorService, type TurnResult } from './orchestrator/orchestrator.service';
+import { OrchestratorService, type TurnEvent, type TurnResult } from './orchestrator/orchestrator.service';
 
 /** Channel-facing chat entry points (playground, portal, public webchat, WhatsApp). */
 @Injectable()
@@ -53,8 +53,8 @@ export class ChatService {
     return { conversation: { ...conv, sessionTokenHash: undefined }, welcome, agent: { name: agent.name } };
   }
 
-  send(conversationId: string, text: string, action?: Record<string, unknown> | null): Promise<TurnResult> {
-    return this.orchestrator.handleTurn({ conversationId, text, action });
+  send(conversationId: string, text: string, action?: Record<string, unknown> | null, onEvent?: (e: TurnEvent) => void): Promise<TurnResult> {
+    return this.orchestrator.handleTurn({ conversationId, text, action, onEvent });
   }
 
   /** Ready-made demo scenarios for the AI Playground, resolved against the tenant's real data. */

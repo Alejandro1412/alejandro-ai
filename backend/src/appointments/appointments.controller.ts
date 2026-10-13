@@ -9,6 +9,7 @@ import {
   createAppointmentSchema,
   listAppointmentsSchema,
   rescheduleSchema,
+  seriesSchema,
   updateAppointmentSchema,
 } from './appointments.service';
 import { AvailabilityService } from './availability.service';
@@ -36,6 +37,32 @@ export class AppointmentsController {
   @ApiZodQuery(listAppointmentsSchema)
   list(@Query(zv(listAppointmentsSchema)) q: z.infer<typeof listAppointmentsSchema>) {
     return this.appointments.list(q);
+  }
+
+  @Post('series')
+  @RequirePermissions('appointments.create')
+  @ApiOperation({ summary: 'Book a recurring series (weekly / biweekly / monthly). Conflicting dates are skipped and reported.' })
+  @ApiZodBody(seriesSchema)
+  series(@Body(zv(seriesSchema)) dto: z.infer<typeof seriesSchema>) {
+    return this.appointments.createSeries(dto);
+  }
+
+  @Post('series/:seriesId/cancel')
+  @RequirePermissions('appointments.delete')
+  cancelSeries(@Param('seriesId', ParseUUIDPipe) seriesId: string, @Body(zv(cancelSchema)) dto: z.infer<typeof cancelSchema>) {
+    return this.appointments.cancelSeries(seriesId, dto.reason);
+  }
+
+  @Get(':id/intake')
+  @RequirePermissions('appointments.read')
+  intake(@Param('id', ParseUUIDPipe) id: string) {
+    return this.appointments.intakeFor(id);
+  }
+
+  @Post(':id/confirm-attendance')
+  @RequirePermissions('appointments.update')
+  confirmAttendance(@Param('id', ParseUUIDPipe) id: string) {
+    return this.appointments.confirmAttendance(id, 'staff');
   }
 
   @Get('slots')

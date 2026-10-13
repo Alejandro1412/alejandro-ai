@@ -3,7 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { HiOutlineArrowPath, HiOutlinePlay } from 'react-icons/hi2';
 import { AgentAvatar } from '@/components/brand/Logo';
 import { ChatThread } from '@/components/chat/ChatThread';
-import { useChat } from '@/components/chat/useChat';
+import { streamOrPost, useChat, type ChatSender } from '@/components/chat/useChat';
 import { Button } from '@/components/ui/Button';
 import { Badge, Card, Segmented, Tabs } from '@/components/ui/Display';
 import { Field, Select } from '@/components/ui/Field';
@@ -13,7 +13,7 @@ import { usePreferences, useT } from '@/contexts/PreferencesContext';
 import { api } from '@/lib/api';
 import { cn, fullName } from '@/lib/format';
 import { useRealtime } from '@/lib/realtime';
-import type { ChatAction, Message, Patient, TurnResult } from '@/types';
+import type { AgentStep, Message, Patient, TurnResult } from '@/types';
 import { TracePanel } from './TracePanel';
 
 interface Scenario {
@@ -40,12 +40,26 @@ export default function PlaygroundPage() {
   const scenarios = useQuery({ queryKey: ['ai', 'scenarios'], queryFn: () => api.get<Scenario[]>('/ai/playground/scenarios') });
   const patients = useQuery({ queryKey: ['patients', 'playground'], queryFn: () => api.page<Patient>('/patients', { pageSize: 50 }) });
 
-  const send = useCallback(
-    (text: string, action: ChatAction | undefined, conversationId: string | null) =>
-      api.post<TurnResult>('/ai/chat', { message: text, action, conversationId: conversationId ?? undefined, patientId: conversationId ? undefined : patientRef.current || null, language: lang }),
+  const send = useCallback<ChatSender>(
+    (text, action, conversationId, live) => {
+      const body = { message: text, action, conversationId: conversationId ?? undefined, patientId: conversationId ? undefined : patientRef.current || null, language: lang };
+      return streamOrPost(
+        (h) => api.stream<TurnResult>('/ai/chat/stream', body, (event, data) => (event === 'step' ? h.onStep(data as AgentStep) : event === 'delta' && h.onDelta((data as { text: string }).text))),
+        () => api.post<TurnResult>('/ai/chat', body),
+        live,
+      );
+    },
     [lang],
   );
   const chat = useChat(send);
+  const onFeedback = useCallback(
+    (m: Message, value: 1 | -1 | null) => {
+      if (!chat.conversationId) return;
+      chat.setFeedback(m.id, value);
+      void api.post(`/conversations/${chat.conversationId}/messages/${m.id}/feedback`, { value }).catch(() => chat.setFeedback(m.id, m.feedback ?? null));
+    },
+    [chat],
+  );
 
   // Live system events (tool calls) streamed over the socket while the agent works.
   const onEvent = useCallback(
@@ -159,7 +173,16 @@ export default function PlaygroundPage() {
         </Badge>
       </div>
       {handedOff && <p className="bg-warning-soft px-4 py-2 text-xs text-warning">{t('playground.handoffBanner')}</p>}
-      <ChatThread messages={chat.messages as Message[]} typing={chat.typing} onSend={(text, action) => void chat.submit(text, action)} emptyHint={t('playground.placeholder')} showDisclaimer={false} />
+      <ChatThread
+        messages={chat.messages as Message[]}
+        typing={chat.typing}
+        live={chat.live}
+        journey={chat.journey}
+        onFeedback={onFeedback}
+        onSend={(text, action) => void chat.submit(text, action)}
+        emptyHint={t('playground.placeholder')}
+        showDisclaimer={false}
+      />
     </div>
   );
 

@@ -67,6 +67,10 @@ export class AnalyticsService {
         this.db.select({ n: sql<number>`count(*)::int` }).from(handoffs).where(tenantScope(handoffs, eq(handoffs.clinicId, clinicId), gte(handoffs.createdAt, prevSince), lt(handoffs.createdAt, since))),
         this.db.select({ n: sql<number>`count(*)::int` }).from(handoffs).where(tenantScope(handoffs, eq(handoffs.clinicId, clinicId), sql`${handoffs.status} in ('OPEN','ASSIGNED')`)),
       ]);
+      const [fb] = await this.db
+        .select({ up: sql<number>`count(*) filter (where ${messages.feedback} = 1)::int`, down: sql<number>`count(*) filter (where ${messages.feedback} = -1)::int` })
+        .from(messages)
+        .where(tenantScope(messages, gte(messages.feedbackAt, since), sql`${messages.conversationId} in (select id from conversations where clinic_id = ${clinicId} and channel <> 'PLAYGROUND')`));
       const resolution = pct(n(conv.resolved), n(conv.n));
       const resolutionPrev = pct(n(convPrev.resolved), n(convPrev.n));
       return {
@@ -78,6 +82,7 @@ export class AnalyticsService {
         humanHandoffs: { value: n(ho.n), open: n(openHo.n), delta: delta(n(ho.n), n(hoPrev.n)) },
         aiResolutionRate: { value: resolution, delta: Math.round((resolution - resolutionPrev) * 10) / 10 },
         bookingConversion: { value: pct(n(conv.booked), n(conv.n)) },
+        satisfaction: { positive: n(fb.up), negative: n(fb.down), rate: n(fb.up) + n(fb.down) ? pct(n(fb.up), n(fb.up) + n(fb.down)) : null },
       };
     });
   }
@@ -135,12 +140,13 @@ export class AnalyticsService {
     return this.cache.wrap(this.key('insights', days), 60, async () => {
       const clinicId = TenantContext.clinicId();
       const since = new Date(Date.now() - days * 86_400_000);
-      const convOfClinic = sql`${messages.conversationId} in (select id from conversations where clinic_id = ${clinicId})`;
+      // Playground (staff testing) conversations never pollute patient insights.
+      const convOfClinic = sql`${messages.conversationId} in (select id from conversations where clinic_id = ${clinicId} and channel <> 'PLAYGROUND')`;
       const [intents, unanswered, tools, statuses, channels, specialties] = await Promise.all([
         this.db
           .select({ intent: messages.intent, n: sql<number>`count(*)::int` })
           .from(messages)
-          .where(tenantScope(messages, eq(messages.role, 'USER'), gte(messages.createdAt, since), convOfClinic, sql`${messages.intent} not in ('greeting','thanks','goodbye','identify','action','unknown')`))
+          .where(tenantScope(messages, eq(messages.role, 'USER'), gte(messages.createdAt, since), convOfClinic, sql`${messages.intent} not in ('greeting','thanks','goodbye','identify','action','unknown','small_talk','affirm','deny','select_option','capabilities')`))
           .groupBy(messages.intent)
           .orderBy(desc(sql`count(*)`))
           .limit(8),

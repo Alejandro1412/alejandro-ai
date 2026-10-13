@@ -39,6 +39,7 @@ export const faqSourceSchema = z.object({
     .max(500),
 });
 export const urlSourceSchema = z.object({ url: z.string().url().max(2000), title: z.string().trim().max(200).optional(), category: z.string().trim().max(60).optional() });
+export const websiteImportSchema = z.object({ url: z.string().url().max(2000), maxPages: z.number().int().min(1).max(15).default(8) });
 export const updateSourceSchema = z.object({
   title: z.string().trim().min(2).max(200).optional(),
   category: z.string().trim().max(60).nullable().optional(),
@@ -199,6 +200,53 @@ export class KnowledgeService implements OnModuleInit {
     const source = await this.insertSource({ title: dto.title || dto.url, type: 'URL', category: dto.category, sourceUrl: dto.url });
     await this.enqueue(source.id);
     return source;
+  }
+
+  /**
+   * Onboarding shortcut: reads the clinic website home page, picks the most useful same-site pages
+   * (services, prices, hours, contact, team, FAQ…) and ingests each as a URL source.
+   */
+  async importWebsite(dto: z.infer<typeof websiteImportSchema>) {
+    await assertPublicUrl(dto.url);
+    const home = new URL(dto.url);
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 10_000);
+    const res = await fetch(home, { signal: controller.signal, redirect: 'error', headers: { 'User-Agent': 'AlejandroAI-KnowledgeBot/1.0' } }).finally(() => clearTimeout(timer));
+    if (!res.ok) throw new ValidationError(`The website returned HTTP ${res.status}`);
+    const html = (await res.text()).slice(0, 2_000_000);
+    const KEY = /(servicio|service|precio|tarifa|price|pricing|horario|hours|contact|ubicaci|location|sede|nosotros|about|equipo|team|doctor|medic|especialidad|specialt|faq|pregunta|question|seguro|insurance|pago|payment|preparaci|politica|policy)/i;
+    const seen = new Set<string>([home.origin + home.pathname.replace(/\/$/, '')]);
+    const candidates: { url: string; score: number }[] = [];
+    for (const m of html.matchAll(/<a\s[^>]*href=["']([^"'#]+)["'][^>]*>([\s\S]*?)<\/a>/gi)) {
+      let u: URL;
+      try {
+        u = new URL(m[1], home);
+      } catch {
+        continue;
+      }
+      if (u.host !== home.host || !/^https?:$/.test(u.protocol) || /\.(pdf|jpe?g|png|gif|svg|webp|zip|docx?|xlsx?|mp4)$/i.test(u.pathname)) continue;
+      u.hash = '';
+      u.search = '';
+      const key = u.origin + u.pathname.replace(/\/$/, '');
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const label = m[2].replace(/<[^>]+>/g, ' ');
+      candidates.push({ url: u.toString(), score: (KEY.test(u.pathname) ? 2 : 0) + (KEY.test(label) ? 1 : 0) });
+    }
+    const picked = [home.toString(), ...candidates.sort((a, b) => b.score - a.score).filter((c) => c.score > 0).slice(0, dto.maxPages - 1).map((c) => c.url)];
+    const created: { id: string; url: string }[] = [];
+    const skipped: { url: string; reason: string }[] = [];
+    for (const url of picked) {
+      try {
+        const src = await this.createFromUrl({ url, category: 'website' });
+        created.push({ id: src.id, url });
+      } catch (err) {
+        skipped.push({ url, reason: (err as { code?: string }).code ?? (err as Error).message });
+        if ((err as { code?: string }).code === 'PLAN_LIMIT_REACHED') break;
+      }
+    }
+    await this.audit.log({ action: 'knowledge.imported_url', entityType: 'KnowledgeSource', metadata: { site: home.origin, pages: created.length } });
+    return { site: home.origin, created, skipped, discovered: candidates.length };
   }
 
   async update(id: string, dto: z.infer<typeof updateSourceSchema>) {

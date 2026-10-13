@@ -14,6 +14,7 @@ import {
   textSourceSchema,
   updateSourceSchema,
   urlSourceSchema,
+  websiteImportSchema,
 } from './knowledge.service';
 
 const searchSchema = z.object({ q: z.string().trim().min(2).max(500), topK: z.coerce.number().int().min(1).max(10).default(4) });
@@ -73,6 +74,13 @@ export class KnowledgeController {
   @ApiZodBody(faqSourceSchema)
   faq(@Body(zv(faqSourceSchema)) dto: z.infer<typeof faqSourceSchema>) {
     return this.knowledge.createFaq(dto);
+  }
+
+  @Post('website')
+  @RequirePermissions('knowledge.write')
+  @ApiZodBody(websiteImportSchema)
+  website(@Body(zv(websiteImportSchema)) dto: z.infer<typeof websiteImportSchema>) {
+    return this.knowledge.importWebsite(dto);
   }
 
   @Post('url')

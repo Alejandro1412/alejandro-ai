@@ -75,6 +75,26 @@ services:
     ports:
       - "${FRONTEND_PORT:-8080}:8080"
 
+  # Nightly logical backups (enable with: docker compose --profile backup up -d)
+  backup:
+    image: pgvector/pgvector:pg16
+    profiles: ["backup"]
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD:-postgres}@postgres:5432/alejandro
+      BACKUP_DIR: /backups
+      BACKUP_RETENTION_DAYS: ${BACKUP_RETENTION_DAYS:-14}
+      BACKUP_ENCRYPTION_PASSPHRASE: ${BACKUP_ENCRYPTION_PASSPHRASE:-}
+      BACKUP_INTERVAL_SECONDS: ${BACKUP_INTERVAL_SECONDS:-86400}
+    volumes:
+      - ./scripts:/scripts:ro
+      - backups:/backups
+    entrypoint: ["/bin/sh", "-c", "while true; do /scripts/backup.sh || echo 'backup failed'; sleep $${BACKUP_INTERVAL_SECONDS}; done"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+
 volumes:
   pgdata:
   redisdata:
+  backups:

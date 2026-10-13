@@ -54,6 +54,7 @@ export async function runSeed(databaseUrl = process.env.DATABASE_URL, opts: { qu
 
   log('→ Resetting data');
   const tables = [
+    'push_subscriptions', 'review_requests', 'campaigns', 'intake_responses', 'waitlist_entries', 'action_tokens', 'consent_records', 'whatsapp_channels',
     'usage_records', 'invoices', 'subscriptions', 'plans', 'webhook_events', 'audit_logs', 'notifications', 'support_tickets', 'handoffs', 'leads',
     'knowledge_chunks', 'knowledge_sources', 'tool_executions', 'agent_tools', 'agents', 'messages', 'conversations', 'calendar_integrations',
     'appointments', 'patients', 'time_off', 'doctor_schedules', 'doctor_services', 'doctors', 'services', 'specialties', 'refresh_tokens',
@@ -97,6 +98,8 @@ export async function runSeed(databaseUrl = process.env.DATABASE_URL, opts: { qu
       country: 'Colombia',
       businessHours: { mon: [['07:00', '19:00']], tue: [['07:00', '19:00']], wed: [['07:00', '19:00']], thu: [['07:00', '19:00']], fri: [['07:00', '19:00']], sat: [['08:00', '12:00']] },
       onboardedAt: now.minus({ days: 90 }).toJSDate(),
+      googleReviewUrl: 'https://g.page/r/novacare-medical-center/review',
+      minutesSavedPerConversation: 4,
     })
     .returning();
   const O = { organizationId: org.id };
@@ -135,7 +138,23 @@ export async function runSeed(databaseUrl = process.env.DATABASE_URL, opts: { qu
       { ...C, specialtyId: cardio.id, name: 'Consulta de cardiología', nameEn: 'Cardiology consultation', durationMinutes: 40, priceCents: 18000000, currency: 'COP', description: 'Valoración cardiovascular con el especialista.' },
       { ...C, specialtyId: cardio.id, name: 'Electrocardiograma (ECG)', nameEn: 'Electrocardiogram (ECG)', durationMinutes: 30, priceCents: 9500000, currency: 'COP', description: 'Registro de la actividad eléctrica del corazón.' },
       { ...C, specialtyId: cardio.id, name: 'Ecocardiograma', nameEn: 'Echocardiogram', durationMinutes: 45, priceCents: null, currency: 'COP', description: 'Ecografía del corazón. Precio según plan y orden médica.' },
-      { ...C, specialtyId: derma.id, name: 'Consulta dermatológica', nameEn: 'Dermatology consultation', durationMinutes: 30, priceCents: 15000000, currency: 'COP', description: 'Valoración de piel, cabello y uñas.' },
+      {
+        ...C,
+        specialtyId: derma.id,
+        name: 'Consulta dermatológica',
+        nameEn: 'Dermatology consultation',
+        durationMinutes: 30,
+        priceCents: 15000000,
+        currency: 'COP',
+        description: 'Valoración de piel, cabello y uñas.',
+        depositCents: 5000000,
+        intakeFields: [
+          { key: 'reason', label: 'Motivo de la consulta (administrativo)', type: 'textarea', required: true },
+          { key: 'insurance', label: 'Tipo de afiliación', type: 'select', options: ['Particular', 'Prepagada', 'EPS'], required: true },
+          { key: 'firstVisit', label: 'Es mi primera vez en NovaCare', type: 'checkbox' },
+        ],
+      },
+      { ...C, specialtyId: derma.id, name: 'Teleconsulta de control (dermatología)', nameEn: 'Dermatology video follow-up', durationMinutes: 30, priceCents: 11000000, currency: 'COP', description: 'Control por videollamada para pacientes con valoración previa.', isVirtual: true },
       { ...C, specialtyId: derma.id, name: 'Control de lunares (dermatoscopia)', nameEn: 'Mole check (dermoscopy)', durationMinutes: 30, priceCents: 12000000, currency: 'COP', description: 'Revisión de lunares con dermatoscopio.' },
       { ...C, specialtyId: derma.id, name: 'Tratamiento de acné', nameEn: 'Acne treatment', durationMinutes: 30, priceCents: 16000000, currency: 'COP', description: 'Consulta y plan de manejo del acné.' },
       { ...C, specialtyId: orto.id, name: 'Consulta de ortopedia', nameEn: 'Orthopedics consultation', durationMinutes: 40, priceCents: 17000000, currency: 'COP', description: 'Valoración de huesos y articulaciones.' },
@@ -300,6 +319,83 @@ export async function runSeed(databaseUrl = process.env.DATABASE_URL, opts: { qu
   for (let i = 0; i < apptValues.length; i += 200) await db.insert(s.appointments).values(apptValues.slice(i, i + 200));
   log(`   ${apptValues.length} appointments`);
 
+  // ── v3: consent evidence, reviews, waitlist, campaigns, attendance confirmations ──
+  log('→ Engagement (consent, reviews, waitlist, campaigns)');
+  await db.execute(sql`update patients set consent_at = created_at, consent_version = '2026-10',
+    marketing_consent_at = case when ascii(substr(id::text, 1, 1)) % 10 < 6 then created_at end where clinic_id = ${clinic.id}`);
+  const consentRows = await db.select({ id: s.patients.id, createdAt: s.patients.createdAt, mkt: s.patients.marketingConsentAt, source: s.patients.source }).from(s.patients).where(sql`clinic_id = ${clinic.id}`);
+  await db.insert(s.consentRecords).values(
+    consentRows.flatMap((p) => [
+      { ...C, patientId: p.id, kind: 'DATA_PROCESSING' as const, granted: true, version: '2026-10', channel: p.source, createdAt: p.createdAt },
+      ...(p.mkt ? [{ ...C, patientId: p.id, kind: 'MARKETING' as const, granted: true, version: '2026-10', channel: p.source, createdAt: p.createdAt }] : []),
+    ]),
+  );
+  // Upcoming 48h: reminders sent, ~60 % already confirmed by the patient.
+  await db.execute(sql`update appointments set reminder_sent_at = start_time - interval '24 hours',
+    patient_confirmed_at = case when ascii(substr(id::text, 2, 1)) % 10 < 6 then start_time - interval '20 hours' end
+    where clinic_id = ${clinic.id} and status = 'CONFIRMED' and start_time between now() and now() + interval '48 hours'`);
+  // Reviews for recent completed visits of consenting patients.
+  const recentDone = await db.execute<{ id: string; patient_id: string; doctor_id: string; end_time: Date }>(sql`select a.id, a.patient_id, a.doctor_id, a.end_time from appointments a
+    join patients p on p.id = a.patient_id where a.clinic_id = ${clinic.id} and a.status = 'COMPLETED' and a.end_time > now() - interval '45 days' and p.marketing_consent_at is not null order by a.end_time desc limit 60`);
+  const ratings = [5, 5, 5, 4, 5, 4, 5, 3, 5, 5, 4, 2, 5, 5, 4];
+  const reviewValues = recentDone.rows.map((a, i) => {
+    const answered = i % 3 !== 2;
+    const rating = ratings[i % ratings.length];
+    const sent = new Date(new Date(a.end_time).getTime() + 3 * 3_600_000);
+    return {
+      ...C,
+      appointmentId: a.id,
+      patientId: a.patient_id,
+      doctorId: a.doctor_id,
+      rating: answered ? rating : null,
+      comment: answered && rating <= 3 ? pick(['La espera fue larga en recepción.', 'Me cambiaron la hora sin avisar.']) : answered && rating === 5 ? pick(['Excelente atención, muy puntuales.', 'El agendamiento por WhatsApp fue facilísimo.', null]) : null,
+      redirectedToGoogle: answered && rating >= 4,
+      sentAt: sent,
+      respondedAt: answered ? new Date(sent.getTime() + 2 * 3_600_000) : null,
+    };
+  });
+  if (reviewValues.length) {
+    await db.insert(s.reviewRequests).values(reviewValues);
+    await db.execute(sql`update appointments set review_requested_at = end_time + interval '3 hours' where id in (select appointment_id from review_requests where clinic_id = ${clinic.id})`);
+  }
+  const waitPatients = patientRows.slice(5, 9);
+  await db.insert(s.waitlistEntries).values(
+    waitPatients.map((p, i) => ({
+      ...C,
+      patientId: p.id,
+      specialtyId: [derma.id, cardio.id, derma.id, orto.id][i],
+      fromDate: now.toJSDate(),
+      toDate: now.plus({ days: 14 + i * 3 }).toJSDate(),
+      timeOfDay: [null, 'morning', 'afternoon', null][i],
+      source: ['AI', 'WHATSAPP', 'HUMAN', 'AI'][i],
+      createdAt: now.minus({ days: 3 - i * 0.5 }).toJSDate(),
+    })),
+  );
+  await db.insert(s.campaigns).values([
+    {
+      ...C,
+      kind: 'REACTIVATION',
+      name: 'Control anual de lunares',
+      message: 'Hola {nombre}, ya pasó un año desde tu última valoración dermatológica en NovaCare. Te recomendamos agendar tu control anual de lunares.',
+      criteria: { monthsSinceLastVisit: 12, specialtyId: derma.id, recipientIds: [] },
+      status: 'SENT',
+      stats: { recipients: 18, sent: 17, failed: 1, booked: 4 },
+      createdById: admin.id,
+      sentAt: now.minus({ days: 12 }).toJSDate(),
+      createdAt: now.minus({ days: 13 }).toJSDate(),
+    },
+    {
+      ...C,
+      kind: 'REACTIVATION',
+      name: 'Chequeo cardiovascular',
+      message: 'Hola {nombre}, en NovaCare te recordamos la importancia de tu chequeo cardiovascular de seguimiento. ¿Agendamos?',
+      criteria: { monthsSinceLastVisit: 6, specialtyId: cardio.id },
+      status: 'DRAFT',
+      createdById: admin.id,
+      createdAt: now.minus({ days: 1 }).toJSDate(),
+    },
+  ]);
+
   // ── AI agent ──
   const [agent] = await db
     .insert(s.agents)
@@ -406,6 +502,8 @@ export async function runSeed(databaseUrl = process.env.DATABASE_URL, opts: { qu
         tokensOut: 90 + Math.floor(rand() * 120),
         latencyMs: lat,
         trace: { seeded: true, intent: sc.intent, provider: 'mock', model: 'alejandro-mock-1', steps: sc.tools.map((t) => ({ type: 'tool', name: t, status: 'SUCCESS', latencyMs: 20 + Math.floor(rand() * 120) })) },
+        // ~35% of patients rate the answer; unanswered questions are the usual thumbs-down.
+        ...(rand() < 0.35 ? { feedback: sc.unanswered ? -1 : rand() < 0.9 ? 1 : -1, feedbackAt: createdAt.plus({ minutes: 1 }).toJSDate() } : {}),
         createdAt: createdAt.plus({ seconds: 22 }).toJSDate(),
       },
     ]);

@@ -13,6 +13,8 @@ export interface Principal {
   permissions: ReadonlySet<string>;
   /** Set when the principal is a patient (portal) or the AI acts on behalf of an identified patient. */
   patientId?: string | null;
+  /** Set when a platform admin is impersonating this user. */
+  impersonatedBy?: string;
 }
 
 export interface RequestContext {

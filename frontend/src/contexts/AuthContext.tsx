@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { api, refreshSession, tokenStore } from '@/lib/api';
+import { api, impersonation, refreshSession, tokenStore } from '@/lib/api';
 import type { Me } from '@/types';
 
 interface AuthCtx {
@@ -71,7 +71,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const logout = useCallback(async () => {
     try {
-      await api.post('/auth/logout');
+      // Ending an impersonation never revokes the operator's own session cookie.
+      if (impersonation.get()) impersonation.stop();
+      else await api.post('/auth/logout');
     } finally {
       tokenStore.set(null);
       setMe(null);

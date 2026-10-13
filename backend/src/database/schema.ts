@@ -15,6 +15,7 @@ import {
   pgTable,
   primaryKey,
   real,
+  smallint,
   text,
   timestamp,
   uniqueIndex,
@@ -36,10 +37,10 @@ export const appointmentStatus = pgEnum('appointment_status', [
   'NO_SHOW',
   'RESCHEDULED',
 ]);
-export const appointmentSource = pgEnum('appointment_source', ['HUMAN', 'AI', 'WEB', 'WHATSAPP', 'API']);
+export const appointmentSource = pgEnum('appointment_source', ['HUMAN', 'AI', 'WEB', 'WHATSAPP', 'API', 'PHONE']);
 export const calendarProviderKind = pgEnum('calendar_provider_kind', ['MOCK', 'INTERNAL', 'GOOGLE', 'MICROSOFT']);
 export const integrationStatus = pgEnum('integration_status', ['CONNECTED', 'DISCONNECTED', 'ERROR']);
-export const conversationChannel = pgEnum('conversation_channel', ['WEB', 'PORTAL', 'PLAYGROUND', 'WHATSAPP']);
+export const conversationChannel = pgEnum('conversation_channel', ['WEB', 'PORTAL', 'PLAYGROUND', 'WHATSAPP', 'PHONE']);
 export const conversationStatus = pgEnum('conversation_status', ['ACTIVE', 'HANDOFF', 'RESOLVED', 'CLOSED']);
 export const messageRole = pgEnum('message_role', ['USER', 'ASSISTANT', 'STAFF', 'SYSTEM', 'TOOL']);
 export const toolExecutionStatus = pgEnum('tool_execution_status', ['SUCCESS', 'ERROR', 'DENIED']);
@@ -54,7 +55,12 @@ export const handoffUrgency = pgEnum('handoff_urgency', ['LOW', 'MEDIUM', 'HIGH'
 export const handoffStatus = pgEnum('handoff_status', ['OPEN', 'ASSIGNED', 'RESOLVED']);
 export const ticketStatus = pgEnum('ticket_status', ['OPEN', 'IN_PROGRESS', 'CLOSED']);
 export const webhookStatus = pgEnum('webhook_status', ['RECEIVED', 'PROCESSED', 'FAILED', 'REJECTED']);
-export const subscriptionStatus = pgEnum('subscription_status', ['TRIALING', 'ACTIVE', 'PAST_DUE', 'CANCELED']);
+export const subscriptionStatus = pgEnum('subscription_status', ['TRIALING', 'ACTIVE', 'PAST_DUE', 'CANCELED', 'EXPIRED', 'SUSPENDED']);
+export const depositStatus = pgEnum('deposit_status', ['NONE', 'PENDING', 'PAID', 'REFUNDED', 'EXPIRED']);
+export const waitlistStatus = pgEnum('waitlist_status', ['WAITING', 'OFFERED', 'BOOKED', 'EXPIRED', 'CANCELLED']);
+export const consentKind = pgEnum('consent_kind', ['DATA_PROCESSING', 'MARKETING']);
+export const campaignKind = pgEnum('campaign_kind', ['REACTIVATION', 'REVIEW']);
+export const campaignStatus = pgEnum('campaign_status', ['DRAFT', 'SENDING', 'SENT']);
 export const billingInterval = pgEnum('billing_interval', ['MONTHLY', 'YEARLY']);
 export const invoiceStatus = pgEnum('invoice_status', ['DRAFT', 'OPEN', 'PAID', 'VOID']);
 export const usageKind = pgEnum('usage_kind', [
@@ -117,6 +123,16 @@ export const clinics = pgTable(
     city: text('city'),
     country: text('country'),
     businessHours: jsonb('business_hours').$type<BusinessHours>().notNull().default({}),
+    /** Public privacy notice shown before collecting patient data (Ley 1581 / GDPR-style consent). */
+    privacyPolicyUrl: text('privacy_policy_url'),
+    /** Version label of the data-processing text patients accept (bump it when the policy changes). */
+    consentVersion: text('consent_version').notNull().default('2026-10'),
+    /** Google "write a review" link used by post-visit review requests. */
+    googleReviewUrl: text('google_review_url'),
+    /** Collect a deposit when booking services that define one. */
+    depositsEnabled: boolean('deposits_enabled').notNull().default(false),
+    /** Minutes of front-desk time one AI conversation is assumed to save (value report). */
+    minutesSavedPerConversation: integer('minutes_saved_per_conversation').notNull().default(4),
     onboardedAt: ts('onboarded_at'),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
@@ -232,6 +248,8 @@ export const specialties = pgTable(
   (t) => [uniqueIndex('specialties_clinic_slug_uq').on(t.clinicId, t.slug), index('specialties_org_idx').on(t.organizationId)],
 );
 
+export type IntakeField = { key: string; label: string; type: 'text' | 'textarea' | 'select' | 'checkbox' | 'date'; required?: boolean; options?: string[] };
+
 export const services = pgTable(
   'services',
   {
@@ -248,6 +266,12 @@ export const services = pgTable(
     /** Minor units (cents). NULL = price on request — the AI never invents a price. */
     priceCents: integer('price_cents'),
     currency: text('currency').notNull().default('USD'),
+    /** Optional deposit charged at booking (minor units). */
+    depositCents: integer('deposit_cents'),
+    /** Virtual consultations get a video link automatically. */
+    isVirtual: boolean('is_virtual').notNull().default(false),
+    /** Pre-visit intake questions sent with the confirmation. */
+    intakeFields: jsonb('intake_fields').$type<IntakeField[]>().notNull().default([]),
     isActive: boolean('is_active').notNull().default(true),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
@@ -367,6 +391,13 @@ export const patients = pgTable(
     /** Long-term, allow-listed administrative memory. */
     preferences: jsonb('preferences').$type<PatientPreferences>().notNull().default({}),
     source: text('source').notNull().default('HUMAN'),
+    /** Data-processing authorization (required before storing personal data from chat). */
+    consentAt: ts('consent_at'),
+    consentVersion: text('consent_version'),
+    /** Separate, optional authorization for reminders of follow-ups, campaigns and review requests. */
+    marketingConsentAt: ts('marketing_consent_at'),
+    /** Set when the record was anonymized on request; personal fields are wiped. */
+    anonymizedAt: ts('anonymized_at'),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
@@ -407,6 +438,16 @@ export const appointments = pgTable(
     cancelledAt: ts('cancelled_at'),
     cancellationReason: text('cancellation_reason'),
     reminderSentAt: ts('reminder_sent_at'),
+    /** Patient answered the reminder ("1 = confirmo"). */
+    patientConfirmedAt: ts('patient_confirmed_at'),
+    depositCents: integer('deposit_cents'),
+    depositStatus: depositStatus('deposit_status').notNull().default('NONE'),
+    paymentRef: text('payment_ref'),
+    /** Video room for virtual consultations. */
+    videoUrl: text('video_url'),
+    /** Recurring series (e.g. weekly physiotherapy). */
+    seriesId: uuid('series_id'),
+    reviewRequestedAt: ts('review_requested_at'),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
@@ -506,6 +547,9 @@ export const messages = pgTable(
     tokensOut: integer('tokens_out').notNull().default(0),
     latencyMs: integer('latency_ms'),
     authorUserId: uuid('author_user_id'),
+    /** Patient/staff rating of an assistant reply: 1 (helpful) or -1 (not helpful). */
+    feedback: smallint('feedback'),
+    feedbackAt: timestamp('feedback_at', { withTimezone: true }),
     createdAt: createdAt(),
   },
   (t) => [
@@ -795,6 +839,10 @@ export type PlanLimits = {
   aiConversationsPerMonth: number | null;
   knowledgeSources: number | null;
   whatsapp: boolean;
+  /** Monthly LLM spend cap in USD; beyond it the clinic falls back to the local engine (null = unlimited). */
+  aiMonthlyBudgetUsd?: number | null;
+  voice?: boolean;
+  campaigns?: boolean;
   customBranding: boolean;
   apiAccess: boolean;
   prioritySupport: boolean;
@@ -835,6 +883,11 @@ export const subscriptions = pgTable('subscriptions', {
   cancelAtPeriodEnd: boolean('cancel_at_period_end').notNull().default(false),
   stripeCustomerId: text('stripe_customer_id'),
   stripeSubscriptionId: text('stripe_subscription_id').unique(),
+  /** Access continues until this moment after a failed payment / expired trial. */
+  graceEndsAt: ts('grace_ends_at'),
+  lastDunningAt: ts('last_dunning_at'),
+  dunningStage: integer('dunning_stage').notNull().default(0),
+  suspendedReason: text('suspended_reason'),
   createdAt: createdAt(),
   updatedAt: updatedAt(),
 });
@@ -855,6 +908,7 @@ export const invoices = pgTable(
     periodEnd: ts('period_end').notNull(),
     stripeInvoiceId: text('stripe_invoice_id').unique(),
     hostedUrl: text('hosted_url'),
+    description: text('description'),
     issuedAt: ts('issued_at').notNull().defaultNow(),
     paidAt: ts('paid_at'),
     createdAt: createdAt(),
@@ -884,6 +938,162 @@ export const usageRecords = pgTable(
     index('usage_records_kind_idx').on(t.organizationId, t.kind, t.createdAt),
     index('usage_records_conversation_idx').on(t.organizationId, t.conversationId),
   ],
+);
+
+
+// ─────────────────────────── Growth & operations (v3) ───────────────────────────
+/** One WhatsApp Business number per clinic. Inbound webhooks are routed by phone_number_id. */
+export const whatsappChannels = pgTable(
+  'whatsapp_channels',
+  {
+    id: id(),
+    organizationId: orgId(),
+    clinicId: uuid('clinic_id')
+      .notNull()
+      .unique()
+      .references(() => clinics.id, { onDelete: 'cascade' }),
+    phoneNumberId: text('phone_number_id').notNull().unique(),
+    displayPhoneNumber: text('display_phone_number'),
+    wabaId: text('waba_id'),
+    /** Per-clinic access token (AES-256-GCM). NULL = use the platform token from the environment. */
+    accessTokenEncrypted: text('access_token_encrypted'),
+    status: text('status').notNull().default('ACTIVE'),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+);
+
+/** Evidence of each authorization a patient gave or withdrew (who, what text version, when, where). */
+export const consentRecords = pgTable(
+  'consent_records',
+  {
+    id: id(),
+    organizationId: orgId(),
+    clinicId: uuid('clinic_id').notNull(),
+    patientId: uuid('patient_id').references(() => patients.id, { onDelete: 'set null' }),
+    conversationId: uuid('conversation_id'),
+    kind: consentKind('kind').notNull(),
+    granted: boolean('granted').notNull(),
+    version: text('version').notNull(),
+    channel: text('channel').notNull(),
+    ip: text('ip'),
+    userAgent: text('user_agent'),
+    createdAt: createdAt(),
+  },
+  (t) => [index('consent_records_patient_idx').on(t.organizationId, t.patientId)],
+);
+
+/** Single-use, expiring links sent to patients (confirm/cancel, waitlist offers, intake forms, reviews, payments). */
+export const actionTokens = pgTable(
+  'action_tokens',
+  {
+    id: id(),
+    organizationId: orgId(),
+    clinicId: uuid('clinic_id').notNull(),
+    tokenHash: text('token_hash').notNull().unique(),
+    purpose: text('purpose').notNull(),
+    payload: jsonb('payload').$type<Record<string, unknown>>().notNull().default({}),
+    expiresAt: ts('expires_at').notNull(),
+    usedAt: ts('used_at'),
+    createdAt: createdAt(),
+  },
+  (t) => [index('action_tokens_purpose_idx').on(t.organizationId, t.purpose)],
+);
+
+export const waitlistEntries = pgTable(
+  'waitlist_entries',
+  {
+    id: id(),
+    organizationId: orgId(),
+    clinicId: uuid('clinic_id').notNull(),
+    patientId: uuid('patient_id')
+      .notNull()
+      .references(() => patients.id, { onDelete: 'cascade' }),
+    specialtyId: uuid('specialty_id'),
+    doctorId: uuid('doctor_id'),
+    serviceId: uuid('service_id'),
+    fromDate: ts('from_date').notNull(),
+    toDate: ts('to_date').notNull(),
+    timeOfDay: text('time_of_day'),
+    status: waitlistStatus('status').notNull().default('WAITING'),
+    offeredStart: ts('offered_start'),
+    offeredDoctorId: uuid('offered_doctor_id'),
+    offerExpiresAt: ts('offer_expires_at'),
+    appointmentId: uuid('appointment_id'),
+    source: text('source').notNull().default('AI'),
+    notes: text('notes'),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [index('waitlist_clinic_status_idx').on(t.organizationId, t.clinicId, t.status)],
+);
+
+export const intakeResponses = pgTable('intake_responses', {
+  id: id(),
+  organizationId: orgId(),
+  appointmentId: uuid('appointment_id')
+    .notNull()
+    .unique()
+    .references(() => appointments.id, { onDelete: 'cascade' }),
+  answers: jsonb('answers').$type<Record<string, string | boolean>>().notNull(),
+  submittedAt: ts('submitted_at').notNull().defaultNow(),
+});
+
+export const campaigns = pgTable(
+  'campaigns',
+  {
+    id: id(),
+    organizationId: orgId(),
+    clinicId: uuid('clinic_id').notNull(),
+    kind: campaignKind('kind').notNull(),
+    name: text('name').notNull(),
+    message: text('message').notNull(),
+    criteria: jsonb('criteria').$type<Record<string, unknown>>().notNull().default({}),
+    status: campaignStatus('status').notNull().default('DRAFT'),
+    stats: jsonb('stats').$type<{ recipients: number; sent: number; failed: number; booked: number }>().notNull().default({ recipients: 0, sent: 0, failed: 0, booked: 0 }),
+    createdById: uuid('created_by_id'),
+    sentAt: ts('sent_at'),
+    createdAt: createdAt(),
+  },
+  (t) => [index('campaigns_clinic_idx').on(t.organizationId, t.clinicId, t.createdAt)],
+);
+
+export const reviewRequests = pgTable(
+  'review_requests',
+  {
+    id: id(),
+    organizationId: orgId(),
+    clinicId: uuid('clinic_id').notNull(),
+    appointmentId: uuid('appointment_id')
+      .notNull()
+      .unique()
+      .references(() => appointments.id, { onDelete: 'cascade' }),
+    patientId: uuid('patient_id').notNull(),
+    doctorId: uuid('doctor_id'),
+    rating: integer('rating'),
+    comment: text('comment'),
+    redirectedToGoogle: boolean('redirected_to_google').notNull().default(false),
+    sentAt: ts('sent_at').notNull().defaultNow(),
+    respondedAt: ts('responded_at'),
+  },
+  (t) => [index('review_requests_clinic_idx').on(t.organizationId, t.clinicId, t.sentAt)],
+);
+
+export const pushSubscriptions = pgTable(
+  'push_subscriptions',
+  {
+    id: id(),
+    organizationId: orgId(),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    endpoint: text('endpoint').notNull().unique(),
+    p256dh: text('p256dh').notNull(),
+    auth: text('auth').notNull(),
+    userAgent: text('user_agent'),
+    createdAt: createdAt(),
+  },
+  (t) => [index('push_subscriptions_user_idx').on(t.organizationId, t.userId)],
 );
 
 // ─────────────────────────── Relations (query API) ───────────────────────────
@@ -958,4 +1168,17 @@ export const subscriptionsRelations = relations(subscriptions, ({ one, many }) =
 }));
 export const agentsRelations = relations(agents, ({ one }) => ({
   clinic: one(clinics, { fields: [agents.clinicId], references: [clinics.id] }),
+}));
+export const waitlistEntriesRelations = relations(waitlistEntries, ({ one }) => ({
+  patient: one(patients, { fields: [waitlistEntries.patientId], references: [patients.id] }),
+  doctor: one(doctors, { fields: [waitlistEntries.doctorId], references: [doctors.id] }),
+  specialty: one(specialties, { fields: [waitlistEntries.specialtyId], references: [specialties.id] }),
+  service: one(services, { fields: [waitlistEntries.serviceId], references: [services.id] }),
+}));
+export const reviewRequestsRelations = relations(reviewRequests, ({ one }) => ({
+  patient: one(patients, { fields: [reviewRequests.patientId], references: [patients.id] }),
+  doctor: one(doctors, { fields: [reviewRequests.doctorId], references: [doctors.id] }),
+}));
+export const whatsappChannelsRelations = relations(whatsappChannels, ({ one }) => ({
+  clinic: one(clinics, { fields: [whatsappChannels.clinicId], references: [clinics.id] }),
 }));

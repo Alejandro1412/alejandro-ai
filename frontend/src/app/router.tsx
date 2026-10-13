@@ -44,6 +44,13 @@ const PortalBook = lazy(() => import('@/features/portal/PortalBook'));
 const PortalChat = lazy(() => import('@/features/portal/PortalChat'));
 const PortalProfile = lazy(() => import('@/features/portal/PortalProfile'));
 const NotFound = lazy(() => import('@/features/misc/NotFoundPage'));
+const ActionPage = lazy(() => import('@/features/actions/ActionPage'));
+const LegalPage = lazy(() => import('@/features/legal/LegalPage'));
+const Waitlist = lazy(() => import('@/features/waitlist/WaitlistPage'));
+const Growth = lazy(() => import('@/features/growth/GrowthPage'));
+const ValueReport = lazy(() => import('@/features/reports/ValueReportPage'));
+const AdminConsole = lazy(() => import('@/features/admin/AdminPage'));
+const Impersonate = lazy(() => import('@/features/admin/ImpersonatePage'));
 
 const S = ({ children }: { children: ReactNode }) => <Suspense fallback={<FullScreenLoader />}>{children}</Suspense>;
 
@@ -80,6 +87,9 @@ export const router = createBrowserRouter([
   { path: '/register', element: <S><RedirectIfAuthed><Register /></RedirectIfAuthed></S> },
   { path: '/patient/register', element: <S><RedirectIfAuthed><PatientRegister /></RedirectIfAuthed></S> },
   { path: '/c/:slug', element: <S><Webchat /></S> },
+  { path: '/a/:token', element: <S><ActionPage /></S> },
+  { path: '/legal/:doc', element: <S><LegalPage /></S> },
+  { path: '/impersonate', element: <S><Impersonate /></S> },
   {
     element: <RequireAuth area="staff" />,
     children: [
@@ -102,6 +112,10 @@ export const router = createBrowserRouter([
           { path: '/knowledge', element: <Perm p="knowledge.read"><Knowledge /></Perm> },
           { path: '/knowledge/:id', element: <Perm p="knowledge.read"><KnowledgeDetail /></Perm> },
           { path: '/analytics', element: <Perm p="analytics.read"><Analytics /></Perm> },
+          { path: '/waitlist', element: <Perm p="appointments.read"><Waitlist /></Perm> },
+          { path: '/growth', element: <Perm p="analytics.read"><Growth /></Perm> },
+          { path: '/reports/value', element: <Perm p="analytics.read"><ValueReport /></Perm> },
+          { path: '/admin', element: <Perm p="platform.admin"><AdminConsole /></Perm> },
           { path: '/notifications', element: <Notifications /> },
           {
             path: '/settings',

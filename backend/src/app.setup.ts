@@ -7,7 +7,7 @@ import { env } from './config/env';
 export function configureApp(app: NestExpressApplication): void {
   const config = env();
   app.setGlobalPrefix('api', { exclude: [] });
-  app.set('trust proxy', 1);
+  app.set('trust proxy', env().TRUST_PROXY);
   app.disable('x-powered-by');
   app.use(
     helmet({

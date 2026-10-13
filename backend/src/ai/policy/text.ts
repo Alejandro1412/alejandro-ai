@@ -20,7 +20,8 @@ export function detectLanguage(text: string, fallback: 'es' | 'en' = 'es'): 'es'
     if (ES.has(w)) es++;
     if (EN.has(w)) en++;
   }
-  if (/[áéíóú]/i.test(text)) es += 1;
+  // Accents alone are weak evidence (names like "Gómez" appear in English chats too).
+  if (/[áéíóú]/i.test(text) && es > 0) es += 1;
   if (es === en) return fallback;
   return es > en ? 'es' : 'en';
 }

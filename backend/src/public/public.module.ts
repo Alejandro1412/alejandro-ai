@@ -1,4 +1,8 @@
-import { Body, Controller, Get, Headers, Inject, Module, Param, Post } from '@nestjs/common';
+import { Body, Controller, Get, Headers, Inject, Module, Param, ParseUUIDPipe, Post, Res } from '@nestjs/common';
+import type { Response } from 'express';
+import { RawResponse } from '../common/decorators/auth.decorators';
+import { streamTurn } from '../common/utils/sse';
+import { publicStep, publicTurn } from '../ai/public-turn';
 import { ApiHeader, ApiTags } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
 import { eq } from 'drizzle-orm';
@@ -14,6 +18,7 @@ import { randomToken, sha256 } from '../common/utils/crypto';
 import { AiModule } from '../ai/ai.module';
 import { ChatService } from '../ai/chat.service';
 import { chatSchema } from '../ai/ai.controller';
+import { feedbackSchema } from '../conversations/conversations.controller';
 import { ClinicsModule } from '../clinics/clinics.module';
 import { ClinicsService } from '../clinics/clinics.service';
 import { ConversationsModule } from '../conversations/conversations.module';
@@ -58,7 +63,7 @@ export class PublicController {
       const [agent] = await this.db.select().from(agents).where(eq(agents.clinicId, c.id));
       const services = await this.clinics.listServices();
       return {
-        clinic: { name: c.name, slug: c.slug, description: c.description, phone: c.phone, email: c.email, website: c.website, address: c.address, city: c.city, timezone: c.timezone, businessHours: c.businessHours },
+        clinic: { name: c.name, slug: c.slug, description: c.description, phone: c.phone, email: c.email, website: c.website, address: c.address, city: c.city, country: c.country, timezone: c.timezone, businessHours: c.businessHours, privacyPolicyUrl: c.privacyPolicyUrl, consentVersion: c.consentVersion },
         locations: await this.clinics.listLocations(),
         specialties: (await this.clinics.listSpecialties()).map((s) => ({ id: s.id, name: s.name, nameEn: s.nameEn })),
         services: services.filter((s) => s.isActive).map((s) => ({ id: s.id, name: s.name, nameEn: s.nameEn, durationMinutes: s.durationMinutes, priceCents: s.priceCents, currency: s.currency, specialty: s.specialty?.name ?? null })),
@@ -85,8 +90,31 @@ export class PublicController {
   send(@Param('slug') slug: string, @Headers('x-chat-session') token: string | undefined, @Body(zv(publicMessageSchema)) dto: z.infer<typeof publicMessageSchema>) {
     return this.withClinic(slug, async () => {
       const conv = await this.sessionConversation(token);
-      const r = await this.chat.send(conv.id, dto.message, dto.action ?? null);
-      return { conversationId: r.conversationId, userMessage: r.userMessage, assistantMessage: r.assistantMessage, conversationStatus: r.conversationStatus };
+      return publicTurn(await this.chat.send(conv.id, dto.message, dto.action ?? null));
+    });
+  }
+
+  @Post('chat/:slug/messages/stream')
+  @Throttle({ default: { limit: env().PUBLIC_CHAT_RATE_LIMIT_MAX, ttl: 60_000 } })
+  @RawResponse()
+  @ApiHeader({ name: 'X-Chat-Session', required: true })
+  @ApiZodBody(publicMessageSchema)
+  stream(@Param('slug') slug: string, @Headers('x-chat-session') token: string | undefined, @Body(zv(publicMessageSchema)) dto: z.infer<typeof publicMessageSchema>, @Res() res: Response) {
+    return this.withClinic(slug, async () => {
+      // Session is validated before the stream opens so auth errors use the normal JSON envelope.
+      const conv = await this.sessionConversation(token);
+      await streamTurn(res, async (onStep) => publicTurn(await this.chat.send(conv.id, dto.message, dto.action ?? null, publicStep(onStep))));
+    });
+  }
+
+  @Post('chat/:slug/messages/:messageId/feedback')
+  @Throttle({ default: { limit: env().PUBLIC_CHAT_RATE_LIMIT_MAX, ttl: 60_000 } })
+  @ApiHeader({ name: 'X-Chat-Session', required: true })
+  @ApiZodBody(feedbackSchema)
+  feedback(@Param('slug') slug: string, @Param('messageId', ParseUUIDPipe) messageId: string, @Headers('x-chat-session') token: string | undefined, @Body(zv(feedbackSchema)) dto: z.infer<typeof feedbackSchema>) {
+    return this.withClinic(slug, async () => {
+      const conv = await this.sessionConversation(token);
+      return this.conversations.setFeedback(conv.id, messageId, dto.value);
     });
   }
 
@@ -96,7 +124,12 @@ export class PublicController {
     return this.withClinic(slug, async () => {
       const conv = await this.sessionConversation(token);
       const msgs = await this.conversations.messages(conv.id, 100);
-      return { conversationId: conv.id, status: conv.status, messages: msgs.map((m) => ({ id: m.id, role: m.role, content: m.content, attachments: m.attachments, createdAt: m.createdAt })) };
+      return {
+        conversationId: conv.id,
+        status: conv.status,
+        journey: (conv.metadata as Record<string, unknown>)?.journey ?? null,
+        messages: msgs.map((m) => ({ id: m.id, role: m.role, content: m.content, attachments: m.attachments, feedback: m.feedback, createdAt: m.createdAt })),
+      };
     });
   }
 

@@ -9,6 +9,8 @@ import type { NotificationsService } from '../../notifications/notifications.ser
 import type { HandoffService } from '../../conversations/handoff.service';
 import type { ConversationsService } from '../../conversations/conversations.service';
 import type { SummarizerService } from '../orchestrator/summarizer.service';
+import type { EngagementService } from '../../engagement/engagement.service';
+import type { PrivacyService } from '../../privacy/privacy.service';
 import type { CardAppointment } from '../attachments';
 import { doctorDisplayName, formatDay, formatTime, formatWhen } from '../../common/utils/time';
 
@@ -24,6 +26,8 @@ export interface ToolDeps {
   handoff: HandoffService;
   conversations: ConversationsService;
   summarizer: SummarizerService;
+  engagement: EngagementService;
+  privacy: PrivacyService;
 }
 
 type ApptLike = {
@@ -35,6 +39,12 @@ type ApptLike = {
   doctor: { title: string; firstName: string; lastName: string; specialty?: { name: string; nameEn?: string | null } | null };
   service?: { name: string } | null;
   location?: { name: string; address: string } | null;
+  videoUrl?: string | null;
+  depositCents?: number | null;
+  depositStatus?: string;
+  patientConfirmedAt?: Date | null;
+  /** Links issued when the appointment was created (not persisted). */
+  links?: { paymentUrl?: string | null; intakeUrl?: string | null; currency?: string };
 };
 
 export function toCard(a: ApptLike, timezone: string, lang: string): CardAppointment {
@@ -49,6 +59,11 @@ export function toCard(a: ApptLike, timezone: string, lang: string): CardAppoint
     when: formatWhen(a.startTime, timezone, lang),
     status: a.status,
     location: a.location ? `${a.location.name} — ${a.location.address}` : null,
+    videoUrl: a.videoUrl ?? null,
+    paymentUrl: a.depositStatus === 'PENDING' ? (a.links?.paymentUrl ?? null) : null,
+    depositAmount: a.depositStatus === 'PENDING' && a.depositCents ? formatPrice(a.depositCents, a.links?.currency ?? 'COP', lang) : null,
+    intakeUrl: a.links?.intakeUrl ?? null,
+    patientConfirmed: Boolean(a.patientConfirmedAt),
   };
 }
 

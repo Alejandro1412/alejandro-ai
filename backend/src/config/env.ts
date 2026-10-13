@@ -72,6 +72,34 @@ export const envSchema = z.object({
   RATE_LIMIT_TTL_MS: z.coerce.number().int().default(60000),
   RATE_LIMIT_MAX: z.coerce.number().int().default(300),
   PUBLIC_CHAT_RATE_LIMIT_MAX: z.coerce.number().int().default(30),
+  /** Express "trust proxy" setting: number of proxy hops (Render/Vercel/nginx = 1), or 'false'. */
+  TRUST_PROXY: z
+    .string()
+    .default('1')
+    .transform((v) => (v === 'false' ? false : v === 'true' ? true : Number(v))),
+
+  // Voice receptionist (Twilio Programmable Voice). Auth token validates X-Twilio-Signature.
+  TWILIO_AUTH_TOKEN: z.string().optional(),
+  VOICE_LANGUAGE_ES: z.string().default('es-MX'),
+  VOICE_LANGUAGE_EN: z.string().default('en-US'),
+
+  // Web push for staff (VAPID). Generate with `npx web-push generate-vapid-keys`.
+  VAPID_PUBLIC_KEY: z.string().optional(),
+  VAPID_PRIVATE_KEY: z.string().optional(),
+  VAPID_SUBJECT: z.string().default('mailto:ops@alejandro.ai'),
+
+  // Billing lifecycle
+  BILLING_GRACE_DAYS: z.coerce.number().int().min(0).default(7),
+  /** Minutes a deposit-held appointment waits for payment before it is released. */
+  DEPOSIT_HOLD_MINUTES: z.coerce.number().int().min(5).default(60),
+
+  /** Video consultations for virtual services (Jitsi Meet: public instance or self-hosted). */
+  VIDEO_BASE_URL: z.string().url().default('https://meet.jit.si'),
+
+  // Observability
+  SENTRY_DSN: z.string().url().optional(),
+  SENTRY_TRACES_SAMPLE_RATE: z.coerce.number().min(0).max(1).default(0),
+
   SWAGGER_ENABLED: z
     .string()
     .optional()

@@ -14,6 +14,7 @@ The whole product runs locally **without any API key**. Every external integrati
 ## Contents
 
 - [Highlights](#highlights)
+- [v3: growth, compliance & operations](docs/growth-and-operations.md)
 - [Quick start](#quick-start)
 - [Demo accounts & demo flow](#demo-accounts--demo-flow)
 - [Architecture](#architecture)
@@ -34,11 +35,18 @@ The whole product runs locally **without any API key**. Every external integrati
 | Area | What you get |
 |---|---|
 | **AI receptionist** | Agent loop: intent → policy engine → tool selection → validated tool execution → grounded response → audit. 24 explicit tools, no DB/SQL/filesystem access for the model. |
+| **Natural, guided conversation** | Talks about anything the patient brings up (small talk, general questions, follow-ups like “¿y cuánto cuesta?”) and always ends with a concrete next step. A guided-journey tracker (specialty → time → details → confirm → done) is shown in the chat. Patients can answer cards in their own words (“el viernes a las 8”, “la segunda”, “sí”) — nothing is booked or cancelled without an explicit confirmation. |
+| **Live, streaming replies** | Server-Sent Events: patients see what the agent is doing (“Consultando la agenda en vivo…”) and the answer appears as it is written. Safe markdown, copy, read-aloud, 👍/👎 feedback (satisfaction KPI), add-to-calendar (.ics / Google). |
+| **Everywhere** | Staff playground, patient portal, public web chat, a floating live demo on the landing page and an embeddable widget for any clinic website (`<script src="…/embed.js" data-clinic="slug">`). |
 | **Agent observability** | AI Playground + trace panel: intent, confidence, policy decision, retrieved documents, every tool call with arguments/result/latency, tokens, cost, provider/model. |
 | **Scheduling** | Doctors, schedules, breaks, time off, services with durations; real-time slot engine; Postgres exclusion constraint that makes double booking impossible even under races. |
 | **Knowledge / RAG** | PDF, DOCX, TXT, FAQ, free text and URLs → normalize → chunk → embed → pgvector (HNSW) → hybrid retrieval with citations. Dynamic data is never answered from RAG. |
 | **Human handoff** | Automatic and requested handoffs with a factual summary, urgency and a reception queue in real time (Socket.IO). |
 | **Multi-tenancy & RBAC** | Organization → clinic isolation enforced centrally (AsyncLocalStorage tenant context + scoped queries). Six roles, 31 granular permissions checked in the backend. |
+| **Fills the agenda (v3)** | Interactive reminders (one-tap links, WhatsApp 1/2/3), waitlist that offers freed slots automatically, deposits that hold slots until paid, pre-visit intake forms, video visits, recurring series, review requests (≥4★ → Google, ≤3★ → private alert) and consent-based reactivation campaigns. |
+| **Voice receptionist (v3)** | Twilio phone line answered by the same agent (speech in, speech out, numbered options, caller-ID identification, transfer to reception), with an in-app call simulator. |
+| **Compliance tooling (v3)** | Versioned consent before storing chat data, consent evidence, patient export & anonymization, legal templates (terms, privacy, DPA) flagged for lawyer review. |
+| **SaaS operations (v3)** | Multi-tenant WhatsApp numbers, trial → grace → read-only lifecycle, dunning, overage invoicing, monthly AI budget cap, platform console with audited impersonation, monthly value report, staff web push, CSV/website imports, deep health, Sentry (PII-stripped), Redis Socket.IO adapter, encrypted backups, AI eval suite. |
 | **Patient portal** | Mobile-first app: book, cancel, reschedule, chat, profile and notification preferences. |
 | **Operations** | Dashboard KPIs, analytics, notifications (in-app, email, WhatsApp, SMS), audit log, usage & AI cost tracking. |
 | **Billing-ready** | Starter / Professional / Clinic plans, trials, limits, usage metering, invoices, Stripe adapter (Checkout, Portal, signed webhooks). |
@@ -128,6 +136,8 @@ Details: [docs/architecture.md](docs/architecture.md).
 
 ## AI agent, tool calling & RAG
 
+> **Open conversation about any topic** needs a real model. Set `ANTHROPIC_API_KEY` (or OpenAI/Gemini) and `AI_DEFAULT_PROVIDER=anthropic`: every clinic still on the built-in engine switches to Claude automatically (default `claude-sonnet-5-5`), with the same tools, safety policy, guided journey and streaming. Without keys, the local engine runs a broad guided conversation (greetings, small talk, capabilities, follow-ups, preparation, pricing, hours, booking, cancelling, rescheduling) at zero cost.
+
 ```
 User message
   → Conversation service (persist, language detection, short-term memory)
@@ -153,12 +163,16 @@ Details: [docs/ai-agent.md](docs/ai-agent.md).
 
 | Integration | Real adapter | Without credentials |
 |---|---|---|
-| LLM | OpenAI, Anthropic, Gemini | `MockLLMProvider` — deterministic agent with the same tool-calling policy |
+| LLM | Anthropic (Claude Sonnet 5.5 / Haiku 4.5 / Opus 5.5), OpenAI, Gemini — any model id your account has | `MockLLMProvider` — deterministic, guided agent with the same tool-calling policy |
 | Embeddings | OpenAI `text-embedding-3-small` (384 dims) | Local hashing embeddings (offline, cross-lingual concept groups) |
 | Calendar | Google Calendar (OAuth, free/busy, events) · Microsoft & Internal providers | `MockCalendarProvider` |
 | WhatsApp | Meta Cloud API (send, templates, signed webhooks) | `MockWhatsAppProvider` + simulator in Settings → Integrations |
 | Email / SMS | Resend / Twilio | Mock outbox visible in the UI |
-| Billing | Stripe (Checkout, Billing Portal, signed webhooks) | Mock billing provider |
+| Billing | Stripe (Checkout, Billing Portal, signed webhooks, deposit payments) | Mock billing provider (simulated deposit payment page) |
+| Voice | Twilio Programmable Voice (`<Gather>` speech + `<Say>`, signed webhooks) | Call simulator in Settings → Integrations |
+| Video visits | Jitsi Meet (public or self-hosted via `VIDEO_BASE_URL`) | Same |
+| Web push | VAPID (`web-push`) | Disabled until keys are set |
+| Error monitoring | Sentry (`SENTRY_DSN`, PII stripped) | Logs only |
 
 ## Pricing plans
 
@@ -193,7 +207,11 @@ npm run build       # nest build + vite build
 
 - Backend **unit**: slot engine, intent classifier, policy engine, response validator, text processing & chunking, crypto, mock LLM tool policy, WhatsApp rendering.
 - Backend **e2e** (real Postgres + pgvector; the test database `alejandro_test` is created, migrated and seeded automatically): auth (login, refresh rotation, reuse detection), RBAC, tenant isolation, booking, calendar conflicts and concurrent races, cancel, reschedule, the full AI demo flow, safety policies, knowledge ingestion & retrieval, WhatsApp webhook idempotency and signatures, public web chat, billing.
-- Frontend: form validation, chat slot selection → confirmation → booking action, composer, preferences (theme, language, accessibility), i18n parity, data table.
+- Backend conversation: small talk without escalation, typed slot choice → confirmation → booking, "no" re-offers options, follow-up context, SSE streaming, public stream without traces, feedback + satisfaction, current model ids; unit tests for the choice resolver, journey, conversational intents and every LLM provider (request shape for Claude 5.x / GPT / Gemini with mocked HTTP).
+- Frontend: form validation, chat slot selection → confirmation → booking action, confirmation card, safe markdown (no HTML injection), journey bar, .ics/Google Calendar, SSE client parsing, live streaming state, composer, preferences (theme, language, accessibility), i18n parity, data table.
+
+- v3 e2e (`test/growth.e2e-spec.ts`): consent before data (accept / decline, portal sign-up), deposits + single-use payment link, intake validation, WhatsApp "1" confirms attendance, waitlist offer → accept, AI waitlist tool, reviews (Google redirect, single use), export + anonymization + RBAC, CSV import, WhatsApp number ownership, Twilio signatures + voice simulation, platform admin RBAC, trial → grace → expired (402 read-only, paused assistant) → reactivation, audited impersonation, value report, deep health.
+- **AI eval suite**: `npm run eval -w backend` — 21 golden / clinical-safety / prompt-injection / privacy conversations (see [docs/growth-and-operations.md](docs/growth-and-operations.md#ai-evaluation-suite)); set `EVAL_PROVIDER` + the provider key to run them against a real model.
 
 Set `TEST_DATABASE_URL` to use another database for e2e tests.
 

@@ -21,6 +21,16 @@ export type Intent =
   | 'greeting'
   | 'thanks'
   | 'goodbye'
+  | 'capabilities'
+  | 'preparation'
+  | 'join_waitlist'
+  | 'confirm_attendance'
+  | 'opt_out'
+  | 'third_party_data'
+  | 'select_option'
+  | 'small_talk'
+  | 'affirm'
+  | 'deny'
   | 'general_question'
   | 'unknown';
 
@@ -62,6 +72,8 @@ export interface Entities {
   email?: string;
   firstName?: string;
   lastName?: string;
+  /** Sub-type for small talk (how_are_you, who_are_you, are_you_bot, joke, compliment, frustration, ack). */
+  topic?: string;
 }
 
 export interface Classification {
@@ -73,6 +85,10 @@ export interface Classification {
 }
 
 const R = {
+  thirdParty: /((telefono|celular|numero|correo|email|direccion|datos|historia clinica|citas|informacion) (y (el |la |los |sus )?[a-z ]+ )?(de|del) (la |el )?(paciente|senora|senor|otra persona|mi (hermano|hermana|mama|papa|esposo|esposa|hijo|hija|amigo|amiga))|(phone|email|address|records|appointments|details) of (the )?(patient|another|my (brother|sister|mother|father|wife|husband|friend))|que citas tiene (la |el )?(paciente )?[a-z]+)/,
+  waitlist: /(lista de espera|avis(a|e)me (si|cuando) (se libera|hay|haya)|avisenme (si|cuando)|me avisan (si|cuando)|si se libera (un|algun) (cupo|horario|espacio)|wait ?list|notify me (if|when)|let me know (if|when) (a )?(slot|spot|opening))/,
+  confirmAttendance: /^(1|confirmo|confirmar|si,? (ahi|alli) estare|ahi estare|alli estare|confirmo (mi )?(asistencia|cita)|i('| wi)ll be there|confirm(ed)?( my (attendance|appointment))?)[.! ]*$/,
+  optOut: /^(baja|stop|unsubscribe|no (me )?(envien|manden) mas( mensajes)?|cancelar suscripcion)[.! ]*$/,
   emergency:
     /(dolor (muy )?(fuerte |intenso )?(en el |del )?pecho|chest pain|no puedo respirar|me falta el aire|can'?t breathe|cannot breathe|short(ness)? of breath|me quiero morir|quitarme la vida|suicid|kill myself|end my life|sangrado (abundante|fuerte|mucho|que no para)|heavy bleeding|desmay|perdio el conocimiento|unconscious|fainted|convulsi|seizure|infarto|heart attack|derrame cerebral|\bstroke\b|sobredosis|overdose|envenen|poison|anafila|anaphyla|emergencia|emergency|urgencia vital)/,
   human:
@@ -97,7 +113,22 @@ const R = {
   thanks: /(gracias|thank)/,
   goodbye: /(adios|chao|hasta luego|nos vemos|\bbye\b|see you)/,
   question: /(\?|^(que|como|cual|cuando|donde|puedo|tienen|hacen|atienden|what|how|which|when|where|can|do|does|is|are)\b)/,
+  preparation: /(como me preparo|como prepararme|preparo para|preparacion (para|de)|que (debo|tengo que|hay que) llevar|que llevo|debo ir en ayunas|en ayunas|ayuno|how (do|should) i prepare|prepare for (my|the)|what (should|do) i (need to )?bring|fasting)/,
+  capabilities: /(que (mas )?puedes hacer|en que (me )?(puedes ayudar|ayudas)|que sabes hacer|para que sirves|como funcionas|que haces\b|what (else )?can you do|how can you help|what do you do|what are you able)/,
+  affirm: /^(si|sí|claro|dale|ok|okay|vale|listo|por favor|yes|yep|yeah|sure|please|de acuerdo|perfecto|confirmo|correcto|exacto|eso|esa|ese|confirm|correct|go ahead|hazlo|adelante)\b/,
+  deny: /^(no|nop|nope|negativo|mejor no|todavia no|aun no|not yet|no thanks|no gracias|ninguno|ninguna|none)\b/,
 };
+
+/** Small-talk topics: answered warmly, then the assistant steers back to what it can do. */
+const SMALL_TALK: [string, RegExp][] = [
+  ['how_are_you', /(como estas|como te va|que tal estas|como andas|how are you|how'?s it going|how do you do)/],
+  ['who_are_you', /(quien eres|que eres\b|como te llamas|cual es tu nombre|who are you|what are you\b|what'?s your name)/],
+  ['are_you_bot', /(eres (un |una )?(robot|bot|humano|humana|persona( real)?|maquina|ia|inteligencia artificial)|are you (a )?(bot|robot|human|real person|real|an? ai))/],
+  ['joke', /(chiste|algo gracioso|hazme reir|tell me a joke|make me laugh|\bjoke\b)/],
+  ['compliment', /(eres (muy |super )?(bueno|buena|genial|lo maximo|util|inteligente|amable)|me encanta(s)?\b|excelente (servicio|atencion)|you('re| are) (great|awesome|smart|helpful|amazing)|love (it|you|this))/],
+  ['frustration', /(no (me )?entiendes|no sirves|eres inutil|que (malo|mala)|estupid|tonto|you don'?t understand|useless|stupid|dumb)/],
+  ['ack', /^(ok|okay|vale|listo|entendido|perfecto|de acuerdo|got it|alright|cool|genial|bien|super|chevere|bacano)(?:[.! ]|👍)*$/],
+];
 
 /** Built-in synonyms that complement the clinic's own specialty keywords. */
 const SPECIALTY_SYNONYMS: Record<string, string[]> = {
@@ -125,6 +156,8 @@ function categoryOf(intent: Intent): PolicyCategory {
       return 'HUMAN_HANDOFF';
     case 'book_appointment':
     case 'check_availability':
+    case 'join_waitlist':
+    case 'confirm_attendance':
     case 'cancel_appointment':
     case 'reschedule_appointment':
     case 'my_appointments':
@@ -135,6 +168,7 @@ function categoryOf(intent: Intent): PolicyCategory {
     case 'support':
       return 'SUPPORT';
     case 'services_info':
+    case 'preparation':
     case 'doctor_info':
     case 'general_question':
     case 'hours':
@@ -249,6 +283,11 @@ export function classify(text: string, catalog: Catalog, timezone: string, now =
   if (flags.emergency) intent = 'emergency';
   else if (flags.wantsHuman) intent = 'human';
   else if (R.policy.test(t) && (R.cancel.test(t) || R.reschedule.test(t) || R.question.test(t))) intent = 'general_question';
+  else if (R.optOut.test(t)) intent = 'opt_out';
+  else if (R.thirdParty.test(t)) intent = 'third_party_data';
+  else if (R.waitlist.test(t)) intent = 'join_waitlist';
+  else if (R.confirmAttendance.test(t) && !/^1$/.test(t)) intent = 'confirm_attendance';
+  else if (R.preparation.test(t)) intent = 'preparation';
   else if (R.cancel.test(t) && (R.book.test(t) || R.myAppointments.test(t) || /cancel/.test(t))) intent = 'cancel_appointment';
   else if (R.reschedule.test(t)) intent = 'reschedule_appointment';
   else if (R.myAppointments.test(t) && !/(necesito|quiero|agendar|reservar|need|want|book)/.test(t)) intent = 'my_appointments';
@@ -265,7 +304,16 @@ export function classify(text: string, catalog: Catalog, timezone: string, now =
   else if ((entities.phone || entities.email) && (entities.firstName || t.split(' ').length <= 8)) intent = 'identify';
   else if (entities.firstName && /(me llamo|mi nombre|my name|soy )/.test(t)) intent = 'identify';
   else if (entities.specialtyId || entities.doctorId) intent = 'book_appointment';
-  else if (R.greeting.test(t) && t.split(' ').length <= 6) intent = 'greeting';
+  else if (R.capabilities.test(t)) intent = 'capabilities';
+  else if (SMALL_TALK.some(([, re]) => re.test(t))) {
+    // "Hola, ¿cómo estás?" is small talk; a bare "Hola" stays a greeting.
+    intent = 'small_talk';
+    entities.topic = SMALL_TALK.find(([, re]) => re.test(t))![0];
+  } else if (R.greeting.test(t) && t.split(' ').length <= 6) intent = 'greeting';
+  else if (R.thanks.test(t) && t.split(' ').length <= 8) intent = 'thanks';
+  else if (R.goodbye.test(t) && t.split(' ').length <= 8) intent = 'goodbye';
+  else if (t.split(' ').length <= 5 && R.affirm.test(t)) intent = 'affirm';
+  else if (t.split(' ').length <= 5 && R.deny.test(t)) intent = 'deny';
   else if (R.thanks.test(t)) intent = 'thanks';
   else if (R.goodbye.test(t)) intent = 'goodbye';
   else if (R.question.test(t)) {

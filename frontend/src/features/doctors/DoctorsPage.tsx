@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
-import { HiOutlineCalendarDays, HiOutlineMapPin, HiOutlineUserGroup, HiPlus } from 'react-icons/hi2';
+import { HiOutlineArrowUpTray, HiOutlineCalendarDays, HiOutlineMapPin, HiOutlineUserGroup, HiPlus } from 'react-icons/hi2';
 import { Link } from 'react-router-dom';
 import { Button } from '@/components/ui/Button';
 import { Avatar, Badge, PageHeader, statusTone } from '@/components/ui/Display';
@@ -11,13 +11,21 @@ import { useT } from '@/contexts/PreferencesContext';
 import { api } from '@/lib/api';
 import { doctorName } from '@/lib/format';
 import type { Doctor, Specialty } from '@/types';
+import { CsvImportDialog } from '../patients/CsvImportDialog';
 import { DoctorFormDialog } from './DoctorFormDialog';
+
+const DOCTORS_TEMPLATE = [
+  'titulo;nombre;apellido;especialidad;duracion;horario;email;telefono',
+  'Dra.;Laura;Martínez;Dermatología;30;lun-vie 08:00-12:00 | sab 08:00-12:00;laura.martinez@example.com;+573001234567',
+  'Dr.;Andrés;Rojas;Medicina general;20;lun-mie 14:00-18:00;;',
+].join('\r\n');
 
 export default function DoctorsPage() {
   const t = useT();
   const { can } = useAuth();
   const [specialtyId, setSpecialtyId] = useState('');
   const [creating, setCreating] = useState(false);
+  const [importing, setImporting] = useState(false);
   const specialties = useQuery({ queryKey: ['specialties'], queryFn: () => api.get<Specialty[]>('/specialties') });
   const q = useQuery({ queryKey: ['doctors', { specialtyId }], queryFn: () => api.get<Doctor[]>('/doctors', { specialtyId }) });
 
@@ -42,9 +50,14 @@ export default function DoctorsPage() {
               ))}
             </Select>
             {can('doctors.create') && (
-              <Button icon={<HiPlus aria-hidden="true" />} onClick={() => setCreating(true)}>
-                {t('doctors.new')}
-              </Button>
+              <>
+                <Button variant="secondary" icon={<HiOutlineArrowUpTray aria-hidden="true" />} onClick={() => setImporting(true)}>
+                  {t('admin.import.button')}
+                </Button>
+                <Button icon={<HiPlus aria-hidden="true" />} onClick={() => setCreating(true)}>
+                  {t('doctors.new')}
+                </Button>
+              </>
             )}
           </>
         }
@@ -106,6 +119,17 @@ export default function DoctorsPage() {
         </ul>
       )}
       <DoctorFormDialog open={creating} onClose={() => setCreating(false)} />
+      <CsvImportDialog
+        open={importing}
+        onClose={() => setImporting(false)}
+        title={t('admin.import.doctorsTitle')}
+        endpoint="/doctors/import"
+        headersHelp={t('admin.import.doctorsHeaders')}
+        note={t('admin.import.doctorsPlanNote')}
+        template={DOCTORS_TEMPLATE}
+        templateName="plantilla-medicos.csv"
+        invalidate={['doctors']}
+      />
     </div>
   );
 }

@@ -7,6 +7,8 @@ import { TenantContext, tenantScope, withTenant } from '../database/tenant';
 import { NotFoundError } from '../common/errors/app-error';
 import { likeTerm, offsetOf, Paginated, paginationSchema } from '../common/utils/pagination';
 import { AuditService } from '../audit/audit.service';
+import { PrivacyService } from '../privacy/privacy.service';
+import { parseCsv, pick } from '../common/utils/csv';
 
 export const patientSchema = z.object({
   firstName: z.string().trim().min(1).max(80),
@@ -28,6 +30,9 @@ export const patientSchema = z.object({
   preferredLanguage: z.enum(['es', 'en']).default('es'),
   notes: z.string().trim().max(2000).nullable().optional(),
   tags: z.array(z.string().trim().max(30)).max(20).default([]),
+  /** Staff attests that the patient authorized data processing (recorded as consent evidence). */
+  consent: z.boolean().optional(),
+  marketingConsent: z.boolean().optional(),
 });
 
 export const patientListSchema = paginationSchema.extend({ tag: z.string().max(30).optional() });
@@ -42,6 +47,7 @@ export class PatientsService {
   constructor(
     @Inject(DB) private readonly db: Database,
     private readonly audit: AuditService,
+    private readonly privacy: PrivacyService,
   ) {}
 
   async list(q: z.infer<typeof patientListSchema>) {
@@ -94,16 +100,23 @@ export class PatientsService {
     return patient;
   }
 
-  async create(dto: z.infer<typeof patientSchema>, source = 'HUMAN') {
+  async create(input: z.infer<typeof patientSchema>, source = 'HUMAN') {
+    const { consent, marketingConsent, ...dto } = input;
     const [row] = await this.db
       .insert(patients)
       .values(withTenant({ ...dto, phone: dto.phone ? normalizePhone(dto.phone) : dto.phone, clinicId: TenantContext.clinicId(), source }))
       .returning();
+    if (consent) await this.privacy.record({ patientId: row.id, kind: 'DATA_PROCESSING', granted: true, channel: source });
+    if (marketingConsent) await this.privacy.record({ patientId: row.id, kind: 'MARKETING', granted: true, channel: source });
     await this.audit.log({ action: 'patient.created', entityType: 'Patient', entityId: row.id, patientId: row.id, metadata: { source } });
     return row;
   }
 
-  async update(id: string, dto: Partial<z.infer<typeof patientSchema>>) {
+  async update(id: string, input: Partial<z.infer<typeof patientSchema>>) {
+    const { consent, marketingConsent, ...dto } = input;
+    if (consent !== undefined) await this.privacy.record({ patientId: id, kind: 'DATA_PROCESSING', granted: consent, channel: 'STAFF' });
+    if (marketingConsent !== undefined) await this.privacy.record({ patientId: id, kind: 'MARKETING', granted: marketingConsent, channel: 'STAFF' });
+    if (!Object.keys(dto).length) return this.get(id, { audit: false });
     const [row] = await this.db
       .update(patients)
       .set({ ...dto, ...(dto.phone ? { phone: normalizePhone(dto.phone) } : {}) })
@@ -124,7 +137,10 @@ export class PatientsService {
   /** Exact match on normalized phone or email inside the current tenant. */
   async findByContact(contact: { phone?: string | null; email?: string | null }) {
     const conds = [
-      contact.phone ? eq(patients.phone, normalizePhone(contact.phone)) : undefined,
+      // Same number with or without country code (+57 300… vs 300…): compare the last 10 digits.
+      contact.phone && contact.phone.replace(/\D/g, '').length >= 7
+        ? sql`right(regexp_replace(${patients.phone}, '\D', '', 'g'), 10) = ${contact.phone.replace(/\D/g, '').slice(-10)}`
+        : undefined,
       contact.email ? eq(patients.email, contact.email.toLowerCase()) : undefined,
     ].filter(Boolean);
     if (!conds.length) return null;
@@ -134,6 +150,59 @@ export class PatientsService {
       .where(tenantScope(patients, or(...conds)))
       .limit(1);
     return row ?? null;
+  }
+
+  /**
+   * Bulk import from CSV (exports of other agendas / spreadsheets). Headers in Spanish or English:
+   * nombre|first_name, apellido|last_name, telefono|phone, email|correo, documento|document_id,
+   * fecha_nacimiento|date_of_birth, idioma|language, etiquetas|tags. Existing patients (same phone/email) are skipped.
+   */
+  async importCsv(csv: string, dryRun = false) {
+    const { rows } = parseCsv(csv, 5000);
+    const result = { total: rows.length, created: 0, skipped: 0, errors: [] as { row: number; error: string }[] };
+    const seen = new Set<string>();
+    for (const [i, r] of rows.entries()) {
+      const full = pick(r, 'nombre_completo', 'full_name', 'name', 'paciente', 'patient');
+      let firstName = pick(r, 'nombre', 'nombres', 'first_name', 'firstname');
+      let lastName = pick(r, 'apellido', 'apellidos', 'last_name', 'lastname', 'surname');
+      if (!firstName && full) {
+        const parts = full.split(/\s+/);
+        firstName = parts[0];
+        lastName = lastName || parts.slice(1).join(' ');
+      }
+      const parsed = patientSchema.safeParse({
+        firstName,
+        lastName: lastName || '-',
+        phone: pick(r, 'telefono', 'celular', 'movil', 'phone', 'mobile', 'whatsapp') || null,
+        email: pick(r, 'email', 'correo', 'correo_electronico', 'e_mail') || null,
+        documentId: pick(r, 'documento', 'cedula', 'document_id', 'document', 'id_number') || null,
+        dateOfBirth: pick(r, 'fecha_nacimiento', 'nacimiento', 'date_of_birth', 'dob', 'birthdate') || null,
+        preferredLanguage: /^en/i.test(pick(r, 'idioma', 'language', 'lang')) ? 'en' : 'es',
+        tags: ['imported', ...pick(r, 'etiquetas', 'tags').split(/[|,]/).map((t) => t.trim()).filter(Boolean)].slice(0, 20),
+      });
+      if (!parsed.success) {
+        result.errors.push({ row: i + 2, error: parsed.error.issues.map((x) => `${x.path.join('.')}: ${x.message}`).join('; ') });
+        continue;
+      }
+      if (!parsed.data.phone && !parsed.data.email) {
+        result.errors.push({ row: i + 2, error: 'phone or email required' });
+        continue;
+      }
+      const keys = [parsed.data.phone ? normalizePhone(parsed.data.phone) : null, parsed.data.email ?? null].filter(Boolean) as string[];
+      if (keys.some((k) => seen.has(k)) || (await this.findByContact({ phone: parsed.data.phone, email: parsed.data.email }))) {
+        result.skipped++;
+        continue;
+      }
+      keys.forEach((k) => seen.add(k));
+      if (!dryRun) {
+        await this.db
+          .insert(patients)
+          .values(withTenant({ ...parsed.data, phone: parsed.data.phone ? normalizePhone(parsed.data.phone) : null, clinicId: TenantContext.clinicId(), source: 'IMPORT' }));
+      }
+      result.created++;
+    }
+    if (!dryRun) await this.audit.log({ action: 'patient.imported', entityType: 'Patient', metadata: { created: result.created, skipped: result.skipped, errors: result.errors.length } });
+    return { ...result, dryRun, errors: result.errors.slice(0, 100) };
   }
 
   async updatePreferences(id: string, prefs: Partial<PatientPreferences>) {

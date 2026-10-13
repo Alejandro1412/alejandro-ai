@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
-import { HiOutlineTrash, HiPlus } from 'react-icons/hi2';
+import { HiOutlinePencilSquare, HiOutlineTrash, HiPlus } from 'react-icons/hi2';
 import { Button } from '@/components/ui/Button';
 import { Badge, Card, CardHeader } from '@/components/ui/Display';
 import { Skeleton } from '@/components/ui/Feedback';
@@ -11,7 +11,9 @@ import { useAuth } from '@/contexts/AuthContext';
 import { usePreferences, useT } from '@/contexts/PreferencesContext';
 import { api, errorMessage } from '@/lib/api';
 import { fmtMoney } from '@/lib/format';
-import type { Clinic, Location, Service, Specialty } from '@/types';
+import type { Clinic, Location, Specialty } from '@/types';
+import { ClinicPrivacyCard, type ClinicV3 } from './ClinicPrivacyCard';
+import { ServiceDialog, type ServiceV3 } from './ServiceDialog';
 
 const DAYS = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'] as const;
 const TIMEZONES = ['America/Bogota', 'America/Mexico_City', 'America/Lima', 'America/Santiago', 'America/Argentina/Buenos_Aires', 'America/New_York', 'America/Los_Angeles', 'Europe/Madrid', 'UTC'];
@@ -23,7 +25,7 @@ export default function ClinicSettings() {
   const toast = useToast();
   const qc = useQueryClient();
   const editable = can('settings.manage');
-  const clinic = useQuery({ queryKey: ['clinic'], queryFn: () => api.get<Clinic>('/clinics/current') });
+  const clinic = useQuery({ queryKey: ['clinic'], queryFn: () => api.get<ClinicV3>('/clinics/current') });
   const [form, setForm] = useState<Partial<Clinic>>({});
   useEffect(() => {
     if (clinic.data) setForm(clinic.data);
@@ -138,8 +140,9 @@ export default function ClinicSettings() {
           </div>
         )}
       </Card>
+      {clinic.data && <ClinicPrivacyCard clinic={clinic.data} editable={editable} />}
       <LocationsCard editable={editable} />
-      <CatalogCard editable={can('services.write')} lang={prefs.lang} />
+      <CatalogCard editable={can('services.write')} lang={prefs.lang} currency={clinic.data?.currency ?? 'COP'} depositsEnabled={Boolean(clinic.data?.depositsEnabled)} />
     </>
   );
 }
@@ -222,16 +225,16 @@ function LocationsCard({ editable }: { editable: boolean }) {
   );
 }
 
-function CatalogCard({ editable, lang }: { editable: boolean; lang: 'es' | 'en' }) {
+function CatalogCard({ editable, lang, currency, depositsEnabled }: { editable: boolean; lang: 'es' | 'en'; currency: string; depositsEnabled: boolean }) {
   const t = useT();
   const qc = useQueryClient();
   const toast = useToast();
   const specialties = useQuery({ queryKey: ['specialties'], queryFn: () => api.get<Specialty[]>('/specialties') });
-  const services = useQuery({ queryKey: ['services'], queryFn: () => api.get<Service[]>('/services') });
+  const services = useQuery({ queryKey: ['services'], queryFn: () => api.get<ServiceV3[]>('/services') });
   const [spOpen, setSpOpen] = useState(false);
   const [svOpen, setSvOpen] = useState(false);
+  const [svEdit, setSvEdit] = useState<ServiceV3 | null>(null);
   const [sp, setSp] = useState({ name: '', nameEn: '', keywords: '' });
-  const [sv, setSv] = useState({ name: '', specialtyId: '', durationMinutes: 30, price: '', currency: 'COP' });
   const refresh = () => {
     void qc.invalidateQueries({ queryKey: ['specialties'] });
     void qc.invalidateQueries({ queryKey: ['services'] });
@@ -240,14 +243,6 @@ function CatalogCard({ editable, lang }: { editable: boolean; lang: 'es' | 'en' 
     mutationFn: () => api.post('/specialties', { name: sp.name, nameEn: sp.nameEn || null, keywords: sp.keywords.split(',').map((k) => k.trim()).filter(Boolean) }),
     onSuccess: () => {
       setSpOpen(false);
-      refresh();
-    },
-    onError: (e) => toast.error(errorMessage(e)),
-  });
-  const createSv = useMutation({
-    mutationFn: () => api.post('/services', { name: sv.name, specialtyId: sv.specialtyId || null, durationMinutes: Number(sv.durationMinutes), priceCents: sv.price ? Math.round(Number(sv.price) * 100) : null, currency: sv.currency }),
-    onSuccess: () => {
-      setSvOpen(false);
       refresh();
     },
     onError: (e) => toast.error(errorMessage(e)),
@@ -264,7 +259,10 @@ function CatalogCard({ editable, lang }: { editable: boolean; lang: 'es' | 'en' 
               <Button size="sm" variant="ghost" icon={<HiPlus aria-hidden="true" />} onClick={() => setSpOpen(true)}>
                 {t('settings.addSpecialty')}
               </Button>
-              <Button size="sm" variant="ghost" icon={<HiPlus aria-hidden="true" />} onClick={() => setSvOpen(true)}>
+              <Button size="sm" variant="ghost" icon={<HiPlus aria-hidden="true" />} onClick={() => {
+                  setSvEdit(null);
+                  setSvOpen(true);
+                }}>
                 {t('settings.addService')}
               </Button>
             </div>
@@ -272,8 +270,8 @@ function CatalogCard({ editable, lang }: { editable: boolean; lang: 'es' | 'en' 
         }
       />
       <div className="space-y-5 px-5 pb-5">
-        {specialties.data?.map((s) => (
-          <section key={s.id} aria-label={s.name}>
+        {[...(specialties.data ?? []), ...(services.data?.some((x) => !x.specialtyId) ? [{ id: '', name: '—', nameEn: null, keywords: [] as string[] }] : [])].map((s) => (
+          <section key={s.id || 'none'} aria-label={s.name}>
             <div className="mb-2 flex flex-wrap items-center gap-2">
               <h3 className="font-semibold">{s.name}</h3>
               {s.nameEn && <Badge>{s.nameEn}</Badge>}
@@ -281,14 +279,36 @@ function CatalogCard({ editable, lang }: { editable: boolean; lang: 'es' | 'en' 
             </div>
             <ul className="divide-y divide-border rounded-xl border border-border">
               {services.data
-                ?.filter((x) => x.specialtyId === s.id)
+                ?.filter((x) => (x.specialtyId ?? '') === s.id)
                 .map((x) => (
                   <li key={x.id} className="flex items-center gap-3 px-3 py-2.5 text-sm">
-                    <span className="min-w-0 flex-1 truncate">{x.name}</span>
-                    <span className="text-ink-3">
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate">{x.name}</span>
+                      {(x.isVirtual || Boolean(x.depositCents) || Boolean(x.intakeFields?.length)) && (
+                        <span className="mt-1 flex flex-wrap gap-1">
+                          {x.isVirtual && <Badge tone="info">{t('admin.service.badgeVirtual')}</Badge>}
+                          {Boolean(x.depositCents) && <Badge tone="warning">{t('admin.service.badgeDeposit', { amount: fmtMoney(x.depositCents ?? 0, x.currency, lang) ?? '' })}</Badge>}
+                          {Boolean(x.intakeFields?.length) && <Badge>{t('admin.service.badgeIntake', { count: x.intakeFields?.length ?? 0 })}</Badge>}
+                        </span>
+                      )}
+                    </span>
+                    <span className="hidden text-ink-3 sm:inline">
                       {x.durationMinutes} {t('common.minutes')}
                     </span>
-                    <span className="w-28 text-right font-medium">{fmtMoney(x.priceCents, x.currency, lang) ?? t('common.priceOnRequest')}</span>
+                    <span className="text-right font-medium sm:w-28">{fmtMoney(x.priceCents, x.currency, lang) ?? t('common.priceOnRequest')}</span>
+                    {editable && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSvEdit(x);
+                          setSvOpen(true);
+                        }}
+                        className="rounded-lg p-1.5 text-ink-3 hover:bg-surface-2 hover:text-ink"
+                        aria-label={t('admin.service.editNamed', { name: x.name })}
+                      >
+                        <HiOutlinePencilSquare aria-hidden="true" />
+                      </button>
+                    )}
                     {editable && (
                       <button type="button" onClick={() => removeSv.mutate(x.id)} className="rounded-lg p-1.5 text-ink-3 hover:bg-danger-soft hover:text-danger" aria-label={`${t('common.delete')} ${x.name}`}>
                         <HiOutlineTrash aria-hidden="true" />
@@ -313,31 +333,7 @@ function CatalogCard({ editable, lang }: { editable: boolean; lang: 'es' | 'en' 
           </Field>
         </div>
       </Modal>
-      <Modal open={svOpen} onClose={() => setSvOpen(false)} title={t('settings.addService')} size="sm" footer={<Button disabled={sv.name.length < 2} loading={createSv.isPending} onClick={() => createSv.mutate()}>{t('common.save')}</Button>}>
-        <div className="space-y-4">
-          <Field label={t('common.name')} required>
-            <Input value={sv.name} onChange={(e) => setSv({ ...sv, name: e.target.value })} />
-          </Field>
-          <Field label={t('doctors.specialty')}>
-            <Select value={sv.specialtyId} onChange={(e) => setSv({ ...sv, specialtyId: e.target.value })}>
-              <option value="">—</option>
-              {specialties.data?.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {s.name}
-                </option>
-              ))}
-            </Select>
-          </Field>
-          <div className="grid grid-cols-2 gap-3">
-            <Field label={t('common.duration')}>
-              <Input type="number" min={5} step={5} value={sv.durationMinutes} onChange={(e) => setSv({ ...sv, durationMinutes: Number(e.target.value) })} />
-            </Field>
-            <Field label={t('common.price')} hint={t('common.priceOnRequest')}>
-              <Input type="number" min={0} value={sv.price} onChange={(e) => setSv({ ...sv, price: e.target.value })} />
-            </Field>
-          </div>
-        </div>
-      </Modal>
+      <ServiceDialog open={svOpen} onClose={() => setSvOpen(false)} service={svEdit} specialties={specialties.data ?? []} currency={currency} depositsEnabled={depositsEnabled} />
     </Card>
   );
 }

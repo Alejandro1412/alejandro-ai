@@ -16,6 +16,17 @@ export interface CheckoutRequest {
   cancelUrl: string;
 }
 
+/** One-off payment (appointment deposits, overage invoices). */
+export interface PaymentLinkRequest {
+  amountCents: number;
+  currency: string;
+  description: string;
+  successUrl: string;
+  cancelUrl: string;
+  customerEmail?: string | null;
+  metadata: Record<string, string>;
+}
+
 export interface BillingEvent {
   id: string;
   type: string;
@@ -28,6 +39,8 @@ export interface BillingProvider {
   createCheckoutSession(req: CheckoutRequest): Promise<{ url: string; sessionId: string; completedImmediately: boolean }>;
   createPortalSession(customerId: string, returnUrl: string): Promise<{ url: string }>;
   cancelSubscription(externalSubscriptionId: string): Promise<void>;
+  /** Hosted payment page for a one-off amount. `simulated` = no real processor (the app shows its own page). */
+  createPaymentLink(req: PaymentLinkRequest): Promise<{ url: string; reference: string; simulated: boolean }>;
   verifyWebhook(rawBody: Buffer, signatureHeader: string | undefined): BillingEvent;
 }
 
@@ -44,6 +57,10 @@ export class MockBillingProvider implements BillingProvider {
   }
   async cancelSubscription(): Promise<void> {
     /* nothing to call */
+  }
+  async createPaymentLink(req: PaymentLinkRequest) {
+    // No processor: the patient lands on the app's own action page, which offers a clearly labelled simulated payment.
+    return { url: req.cancelUrl, reference: `mock_pay_${randomUUID()}`, simulated: true };
   }
   verifyWebhook(rawBody: Buffer): BillingEvent {
     return JSON.parse(rawBody.toString('utf8')) as BillingEvent;
@@ -97,6 +114,25 @@ export class StripeBillingProvider implements BillingProvider {
 
   async cancelSubscription(externalSubscriptionId: string): Promise<void> {
     await this.post(`subscriptions/${externalSubscriptionId}`, { cancel_at_period_end: 'true' });
+  }
+
+  async createPaymentLink(req: PaymentLinkRequest) {
+    const params: Record<string, string> = {
+      mode: 'payment',
+      'line_items[0][quantity]': '1',
+      'line_items[0][price_data][currency]': req.currency.toLowerCase(),
+      'line_items[0][price_data][unit_amount]': String(req.amountCents),
+      'line_items[0][price_data][product_data][name]': req.description.slice(0, 120),
+      success_url: req.successUrl,
+      cancel_url: req.cancelUrl,
+    };
+    for (const [k, v] of Object.entries(req.metadata)) {
+      params[`metadata[${k}]`] = v;
+      params[`payment_intent_data[metadata][${k}]`] = v;
+    }
+    if (req.customerEmail) params.customer_email = req.customerEmail;
+    const session = await this.post<{ id: string; url: string }>('checkout/sessions', params);
+    return { url: session.url, reference: session.id, simulated: false };
   }
 
   /** Implements Stripe's `Stripe-Signature` scheme: t=<ts>,v1=<hmac(t.payload)>, 5-minute tolerance. */

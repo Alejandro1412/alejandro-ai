@@ -98,6 +98,15 @@ export class MockLLMProvider implements LLMProvider {
           : t(L, `No pude cancelar la cita: ${r.error?.message}.`, `I couldn't cancel the appointment: ${r.error?.message}.`),
       );
     }
+    if (a?.type === 'confirm_attendance') {
+      if (!called('confirmAttendance')) return call('confirmAttendance', { appointmentId: a.appointmentId });
+      const r = res('confirmAttendance')!;
+      return say(
+        r.ok
+          ? t(L, `¡Gracias! Quedó confirmada tu asistencia a la cita con ${r.data?.doctorName} el ${r.data?.when}. ¿Necesitas algo más?`, `Thanks! Your attendance with ${r.data?.doctorName} on ${r.data?.when} is confirmed. Anything else?`)
+          : t(L, `No pude confirmar la asistencia: ${r.error?.message}.`, `I couldn't confirm attendance: ${r.error?.message}.`),
+      );
+    }
     if (a?.type === 'start_reschedule') {
       if (!called('getDoctorAvailability')) return call('getDoctorAvailability', { doctorId: a.doctorId, rescheduleAppointmentId: a.appointmentId });
       return this.slotsAnswer(res('getDoctorAvailability')!, L, true);
@@ -163,6 +172,39 @@ export class MockLLMProvider implements LLMProvider {
         const specs = h.catalog.specialties.map((s) => (L === 'en' ? (s.nameEn ?? s.name) : s.name)).join(', ');
         return say(t(L, `¡Con gusto te ayudo a agendar! ¿Con qué especialidad necesitas la cita? Tenemos: ${specs}.`, `Happy to help you book! Which specialty do you need? We offer: ${specs}.`));
       }
+      case 'join_waitlist': {
+        if (!h.patient) return this.askIdentification(L, say);
+        if (!e.specialtyName && !e.doctorId && !e.serviceId)
+          return say(t(L, '¡Claro! Te anoto en la lista de espera. ¿Para qué especialidad o con qué doctor?', 'Sure! I will add you to the waitlist. For which specialty or doctor?'));
+        if (!called('addToWaitlist')) return call('addToWaitlist', compact({ specialty: e.doctorId ? undefined : e.specialtyName, doctorId: e.doctorId, serviceId: e.serviceId, ...dates }));
+        const r = res('addToWaitlist')!;
+        if (!r.ok)
+          return say(
+            r.error?.code === 'ALREADY_ON_WAITLIST'
+              ? t(L, 'Ya estás en la lista de espera para eso. Te escribiré apenas se libere un cupo. ¿Te ayudo con algo más?', "You're already on that waitlist. I'll message you as soon as a slot opens. Anything else?")
+              : t(L, `No pude anotarte: ${r.error?.message}. ¿Te comunico con recepción?`, `I couldn't add you: ${r.error?.message}. Shall I connect you with the front desk?`),
+          );
+        return say(
+          t(
+            L,
+            `Listo, quedaste en la lista de espera de ${r.data?.target} hasta el ${r.data?.to}. Si se libera un cupo te enviaré un enlace para tomarlo (el primero que lo acepte se lo queda). ¿Quieres que mientras tanto te muestre el próximo horario disponible?`,
+            `Done, you're on the ${r.data?.target} waitlist until ${r.data?.to}. If a slot opens I'll send you a link to take it (first come, first served). Meanwhile, want me to show the next available time?`,
+          ),
+        );
+      }
+      case 'confirm_attendance': {
+        if (!h.patient) return this.askIdentification(L, say);
+        if (!called('listPatientAppointments')) return call('listPatientAppointments', { purpose: 'list' });
+        const next = ((res('listPatientAppointments')?.data?.appointments as Card[]) ?? [])[0];
+        if (!next) return say(t(L, 'No encuentro citas próximas a tu nombre. ¿Quieres agendar una?', "I can't find upcoming appointments for you. Would you like to book one?"));
+        if (!called('confirmAttendance')) return call('confirmAttendance', { appointmentId: next.id });
+        const r = res('confirmAttendance')!;
+        return say(
+          r.ok
+            ? t(L, `¡Gracias! Confirmé tu asistencia a la cita con ${r.data?.doctorName} el ${r.data?.when}. Te esperamos. ¿Necesitas algo más?`, `Thanks! Your attendance with ${r.data?.doctorName} on ${r.data?.when} is confirmed. See you then. Anything else?`)
+            : t(L, `No pude confirmar: ${r.error?.message}.`, `I couldn't confirm: ${r.error?.message}.`),
+        );
+      }
       case 'cancel_appointment':
       case 'reschedule_appointment':
       case 'my_appointments': {
@@ -195,7 +237,7 @@ export class MockLLMProvider implements LLMProvider {
             const d = r.data!;
             return say(
               d.price
-                ? t(L, `${d.name} tiene un valor de ${d.price} y dura aproximadamente ${d.durationMinutes} minutos.`, `${d.name} costs ${d.price} and takes about ${d.durationMinutes} minutes.`)
+                ? t(L, `${d.name} tiene un valor de ${d.price} y dura aproximadamente ${d.durationMinutes} minutos. ¿Quieres que busque un horario para agendarlo?`, `${d.name} costs ${d.price} and takes about ${d.durationMinutes} minutes. Shall I look for a time to book it?`)
                 : t(L, `El valor de ${d.name} no está publicado. Recepción puede confirmártelo; ¿quieres que te comunique?`, `The price for ${d.name} isn't published. The front desk can confirm it — would you like me to connect you?`),
             );
           }
@@ -207,7 +249,7 @@ export class MockLLMProvider implements LLMProvider {
         if (!called('getBusinessHours')) return call('getBusinessHours', {});
         const days = (res('getBusinessHours')?.data?.days as { day: string; open: boolean; intervals: string[] }[]) ?? [];
         const lines = days.map((d) => `• ${d.day}: ${d.open ? d.intervals.join(', ') : t(L, 'cerrado', 'closed')}`).join('\n');
-        return say(t(L, `Nuestro horario de atención es:\n${lines}`, `Our opening hours are:\n${lines}`));
+        return say(t(L, `Nuestro horario de atención es:\n${lines}\n\nYo atiendo 24/7 por aquí. ${this.nextStep(h, L)}`, `Our opening hours are:\n${lines}\n\nI'm available 24/7 here. ${this.nextStep(h, L)}`));
       }
       case 'location': {
         if (!called('getClinicLocations')) return call('getClinicLocations', {});
@@ -218,7 +260,7 @@ export class MockLLMProvider implements LLMProvider {
           return say(t(L, `Estamos en ${c.address ?? 'la dirección registrada de la clínica'}${c.city ? `, ${c.city}` : ''}.`, `We're located at ${c.address ?? "the clinic's registered address"}${c.city ? `, ${c.city}` : ''}.`));
         }
         const lines = locs.map((l) => `• ${l.name}: ${l.address}${l.city ? `, ${l.city}` : ''}${l.phone ? ` (${l.phone})` : ''}`).join('\n');
-        return say(t(L, `Nuestras sedes:\n${lines}`, `Our locations:\n${lines}`));
+        return say(t(L, `Nuestras sedes:\n${lines}\n\n${this.nextStep(h, L)}`, `Our locations:\n${lines}\n\n${this.nextStep(h, L)}`));
       }
       case 'doctor_info': {
         if (e.doctorId) {
@@ -238,6 +280,14 @@ export class MockLLMProvider implements LLMProvider {
             `I understand your concern${patientName ? `, ${patientName}` : ''}. I can't provide a diagnosis or treatment advice — a professional needs to evaluate that.${e.specialtyName ? ` I can find you an appointment with ${e.specialtyName}.` : ' I can help you book with the right specialist.'} If symptoms are severe or getting worse, please call your local emergency number.`,
           ),
         );
+      case 'third_party_data':
+        return say(
+          t(
+            L,
+            'Por privacidad no puedo compartir datos ni citas de otras personas, aunque sean familiares. Si eres el paciente, puedo ayudarte con tus propias citas una vez te identifique; si gestionas citas de un familiar, recepción puede orientarte sobre la autorización necesaria. ¿Quieres que te comunique con recepción?',
+            "For privacy reasons I can't share other people's data or appointments, even family members'. If you are the patient I can help with your own appointments once you're identified; if you manage a relative's appointments, the front desk can explain the authorization needed. Shall I connect you with the front desk?",
+          ),
+        );
       case 'support': {
         if (!called('createSupportTicket')) return call('createSupportTicket', { subject: userText.slice(0, 80), description: userText.slice(0, 1500), priority: 'MEDIUM' });
         const r = res('createSupportTicket')!;
@@ -251,12 +301,47 @@ export class MockLLMProvider implements LLMProvider {
         return say(
           t(
             L,
-            `¡Hola${patientName ? ` ${patientName}` : ''}! Soy Alejandro AI, el asistente de ${h.clinicName}. Puedo ayudarte a agendar, reprogramar o cancelar citas, y responder preguntas sobre la clínica. ¿Qué necesitas?`,
-            `Hi${patientName ? ` ${patientName}` : ''}! I'm Alejandro AI, ${h.clinicName}'s assistant. I can help you book, reschedule or cancel appointments and answer questions about the clinic. What do you need?`,
+            `¡Hola${patientName ? ` ${patientName}` : ''}! 👋 Soy Alejandro AI, el asistente de ${h.clinicName}. Puedo agendar, reprogramar o cancelar tus citas, contarte sobre servicios y precios, y guiarte en todo el proceso. ¿Qué necesitas hoy?`,
+            `Hi${patientName ? ` ${patientName}` : ''}! 👋 I'm Alejandro AI, ${h.clinicName}'s assistant. I can book, reschedule or cancel your appointments, tell you about services and prices, and guide you through the whole process. What do you need today?`,
           ),
         );
       case 'thanks':
-        return say(t(L, '¡Con gusto! Si necesitas algo más, aquí estoy.', "You're welcome! I'm here if you need anything else."));
+        return say(t(L, `¡Con mucho gusto${patientName ? `, ${patientName}` : ''}! ${this.nextStep(h, L)}`, `You're very welcome${patientName ? `, ${patientName}` : ''}! ${this.nextStep(h, L)}`));
+      case 'preparation': {
+        const q = `${userText} ${e.serviceName ?? ''} ${e.specialtyName ?? ''} ${t(L, 'preparación cita llegar documentos', 'preparation appointment arrive documents')}`;
+        if (!called('searchClinicKnowledge')) return call('searchClinicKnowledge', { query: q.slice(0, 300) });
+        const kb = res('searchClinicKnowledge')!;
+        if (kb.ok && kb.data?.found) {
+          const focused = (e.serviceName && sectionAbout(kb, e.serviceName.replace(/\(.*\)/, ''))) || (e.specialtyName ? sectionAbout(kb, e.specialtyName) : '');
+          const general = sectionAbout(kb, t(L, 'llegada', 'arriv')) || sectionAbout(kb, 'documentos');
+          const prep = [focused, general].filter(Boolean).join(' ') || extractAnswer(kb, q, 420);
+          return say(
+            t(
+              L,
+              `Así puedes prepararte${e.serviceName ? ` para ${lcFirst(e.serviceName)}` : e.specialtyName ? ` para tu cita de ${e.specialtyName}` : ''}, según la información de ${h.clinicName}: ${prep}\n\nSi tienes una duda médica sobre tu preparación (medicamentos, ayuno por un examen), confírmala con el especialista. ¿Te ayudo con algo más de tu cita?`,
+              `Here's how to prepare${e.serviceName ? ` for ${lcFirst(e.serviceName)}` : e.specialtyName ? ` for your ${e.specialtyName} appointment` : ''}, according to ${h.clinicName}'s information: ${prep}\n\nIf you have a medical question about your preparation (medications, fasting for a test), please confirm it with the specialist. Anything else about your appointment?`,
+            ),
+          );
+        }
+        return say(t(L, `Te recomiendo llegar 15 minutos antes con tu documento de identidad. ${this.nextStep(h, L)}`, `I recommend arriving 15 minutes early with your ID. ${this.nextStep(h, L)}`));
+      }
+      case 'capabilities':
+        return say(
+          t(
+            L,
+            `Soy ${h.clinicName === '' ? 'tu asistente' : `el asistente de ${h.clinicName}`} y puedo ayudarte con muchas cosas:\n• **Agendar** una cita con disponibilidad real\n• **Reprogramar o cancelar** tus citas\n• Contarte sobre **servicios, precios, horarios y sedes**\n• Explicarte **cómo prepararte** para tu consulta\n• **Recordarte** tus citas y comunicarte con una **persona del equipo**\n\n¿Por dónde empezamos?`,
+            `I'm ${h.clinicName}'s assistant and I can help with a lot:\n• **Book** an appointment with real availability\n• **Reschedule or cancel** your appointments\n• Tell you about **services, prices, hours and locations**\n• Explain **how to prepare** for your visit\n• **Remind** you of appointments and connect you with **a team member**\n\nWhere shall we start?`,
+          ),
+        );
+      case 'small_talk':
+        return say(this.smallTalk(String(e.topic ?? ''), h, L, patientName));
+      case 'affirm':
+      case 'deny':
+        return say(
+          h.intent === 'deny'
+            ? t(L, `Entendido. ${this.nextStep(h, L)}`, `Got it. ${this.nextStep(h, L)}`)
+            : t(L, `¡Perfecto! ${this.nextStep(h, L)}`, `Great! ${this.nextStep(h, L)}`),
+        );
       case 'goodbye':
         return say(t(L, '¡Hasta pronto! Que tengas un excelente día.', 'Goodbye! Have a great day.'));
       default: {
@@ -266,14 +351,68 @@ export class MockLLMProvider implements LLMProvider {
         if (kb.ok && kb.data?.found) {
           return say(t(L, `Según la información de ${h.clinicName}: ${extractAnswer(kb, userText, 420)}`, `According to ${h.clinicName}'s information: ${extractAnswer(kb, userText, 420)}`));
         }
+        const clinicRelated = /(clinica|clinic|cita|appointment|doctor|medic|servicio|service|precio|price|horario|hours|sede|pago|payment|seguro|insurance|examen|exam|consulta|resultado|parqueadero|parking)/.test(norm(userText));
         return say(
-          t(
-            L,
-            'No tengo esa información confirmada en este momento y prefiero no darte un dato incorrecto. ¿Quieres que te comunique con recepción para confirmarlo?',
-            "I don't have confirmed information about that right now, and I'd rather not guess. Would you like me to connect you with the front desk?",
-          ),
+          clinicRelated
+            ? t(
+                L,
+                'No tengo esa información confirmada y prefiero no darte un dato incorrecto. Puedo comunicarte con recepción para confirmarlo, o ayudarte con tu cita mientras tanto. ¿Qué prefieres?',
+                "I don't have confirmed information about that and I'd rather not guess. I can connect you with the front desk to confirm it, or help you with your appointment meanwhile. What would you prefer?",
+              )
+            : t(
+                L,
+                `Buena pregunta 🙂 Ese tema se sale de lo que puedo responder con certeza como asistente de ${h.clinicName}, y no quiero inventarte nada. ${this.nextStep(h, L)}`,
+                `Good question 🙂 That's outside what I can answer reliably as ${h.clinicName}'s assistant, and I don't want to make anything up. ${this.nextStep(h, L)}`,
+              ),
         );
       }
+    }
+  }
+
+  /** The guiding sentence every conversational reply ends with, based on where the patient is. */
+  private nextStep(h: LLMRequest['hints'], L: Lang): string {
+    const step = h.journey ? `${h.journey.flow}:${h.journey.step}` : '';
+    switch (step) {
+      case 'booking:need':
+        return t(L, '¿Para qué especialidad quieres la cita?', 'Which specialty would you like the appointment for?');
+      case 'booking:time':
+      case 'reschedule:time':
+        return t(L, 'Cuando quieras, elige uno de los horarios que te mostré o dime qué día te queda mejor.', 'Whenever you like, pick one of the times I showed you or tell me which day suits you best.');
+      case 'booking:details':
+        return t(L, 'Para terminar tu reserva solo necesito tu nombre completo y tu celular.', 'To finish your booking I just need your full name and mobile number.');
+      case 'booking:confirm':
+      case 'reschedule:confirm':
+      case 'cancel:confirm':
+        return t(L, '¿Confirmamos la opción que te propuse?', 'Shall we confirm the option I suggested?');
+      case 'booking:done':
+        return t(L, 'Si quieres te explico cómo prepararte para tu cita.', 'If you like, I can explain how to prepare for your appointment.');
+      default:
+        return h.patient
+          ? t(L, '¿Quieres agendar una cita, revisar tus citas o tienes alguna pregunta sobre la clínica?', 'Would you like to book an appointment, check your appointments or ask something about the clinic?')
+          : t(L, '¿Te ayudo a agendar una cita o tienes alguna pregunta sobre la clínica?', 'Can I help you book an appointment, or do you have a question about the clinic?');
+    }
+  }
+
+  private smallTalk(topic: string, h: LLMRequest['hints'], L: Lang, name?: string): string {
+    const next = this.nextStep(h, L);
+    const hi = name ? `, ${name}` : '';
+    switch (topic) {
+      case 'how_are_you':
+        return t(L, `¡Muy bien, gracias por preguntar${hi}! Listo para ayudarte. ${next}`, `I'm doing great, thanks for asking${hi}! Ready to help. ${next}`);
+      case 'who_are_you':
+        return t(L, `Soy Alejandro AI, el asistente inteligente de ${h.clinicName}. Atiendo 24/7, consulto la agenda real de los médicos y puedo gestionar tus citas de principio a fin. ${next}`, `I'm Alejandro AI, ${h.clinicName}'s intelligent assistant. I'm available 24/7, I check the doctors' real schedules and can handle your appointments end to end. ${next}`);
+      case 'are_you_bot':
+        return t(L, `Soy un asistente de inteligencia artificial, no una persona. Trabajo con los datos reales de la clínica y, si en algún momento prefieres hablar con alguien del equipo, te comunico de inmediato. ${next}`, `I'm an AI assistant, not a person. I work with the clinic's real data, and whenever you'd rather talk to someone on the team I'll connect you right away. ${next}`);
+      case 'joke':
+        return t(L, `¿Sabes por qué el libro de matemáticas fue al médico? ¡Porque tenía demasiados problemas! 😄 Por suerte, agendar una cita conmigo no es ninguno. ${next}`, `Why did the math book go to the doctor? It had too many problems! 😄 Luckily, booking with me isn't one of them. ${next}`);
+      case 'compliment':
+        return t(L, `¡Muchas gracias${hi}, me alegra ayudarte! ${next}`, `Thank you so much${hi}, I'm glad to help! ${next}`);
+      case 'frustration':
+        return t(L, 'Lamento no haberte entendido bien. Vamos paso a paso: dime en pocas palabras qué necesitas (por ejemplo, "cita de dermatología el viernes") o, si prefieres, te comunico con una persona del equipo.', "Sorry I didn't get that right. Let's go step by step: tell me briefly what you need (for example, \"dermatology appointment on Friday\") or, if you prefer, I'll connect you with a team member.");
+      case 'ack':
+        return t(L, `¡Perfecto! ${next}`, `Perfect! ${next}`);
+      default:
+        return next;
     }
   }
 
@@ -303,7 +442,27 @@ export class MockLLMProvider implements LLMProvider {
     say: (c: string) => { content: string; toolCalls: ToolCall[] },
   ) {
     if (r.ok) {
-      const appt = r.data?.appointment as Card;
+      const appt = r.data?.appointment as Card & { paymentUrl?: string | null; depositAmount?: string | null; videoUrl?: string | null; intakeUrl?: string | null };
+      const extras = [
+        appt.videoUrl ? t(L, ' Es una consulta por video: el enlace está en la tarjeta y en tu confirmación.', ' It is a video visit: the link is on the card and in your confirmation.') : '',
+        appt.intakeUrl ? t(L, ' Te dejé un formulario corto para completar antes de la cita.', ' I left you a short form to fill in before the visit.') : '',
+      ].join('');
+      if (appt.paymentUrl)
+        return say(
+          t(
+            L,
+            `Separé tu cita con ${appt.doctorName}${appt.specialty ? ` (${appt.specialty})` : ''} para el ${appt.when}. Para confirmarla, paga el anticipo de ${appt.depositAmount} con el botón de la tarjeta; si no se recibe a tiempo, el horario se libera.${extras} ¿Te ayudo con algo más?`,
+            `I'm holding your appointment with ${appt.doctorName}${appt.specialty ? ` (${appt.specialty})` : ''} on ${appt.when}. To confirm it, pay the ${appt.depositAmount} deposit with the button on the card; if it isn't received in time the slot is released.${extras} Anything else?`,
+          ),
+        );
+      if (extras)
+        return say(
+          t(
+            L,
+            `¡Listo! Tu cita con ${appt.doctorName}${appt.specialty ? ` (${appt.specialty})` : ''} quedó confirmada para el ${appt.when}.${extras} ¿Necesitas algo más?`,
+            `All set! Your appointment with ${appt.doctorName}${appt.specialty ? ` (${appt.specialty})` : ''} is confirmed for ${appt.when}.${extras} Anything else?`,
+          ),
+        );
       return say(
         t(
           L,
@@ -325,7 +484,11 @@ export class MockLLMProvider implements LLMProvider {
     const slots = (r.data?.slots as Slot[]) ?? [];
     if (!slots.length)
       return {
-        content: t(L, 'No encontré horarios disponibles en las próximas semanas. ¿Quieres que te comunique con recepción para buscar una alternativa?', "I couldn't find available times in the coming weeks. Would you like me to connect you with the front desk to find an alternative?"),
+        content: t(
+          L,
+          'No encontré horarios disponibles en las próximas semanas. Puedo anotarte en la lista de espera y avisarte apenas se libere un cupo, o comunicarte con recepción. ¿Qué prefieres?',
+          "I couldn't find available times in the coming weeks. I can put you on the waitlist and message you as soon as a slot opens, or connect you with the front desk. Which do you prefer?",
+        ),
         toolCalls: [],
       };
     const doctors = [...new Set(slots.map((s) => s.doctorName))];
@@ -380,6 +543,8 @@ export class MockLLMProvider implements LLMProvider {
 function tidy(s: string) {
   return s.replace(/\.\.(?!\.)/g, '.').replace(/[ \t]+\n/g, '\n');
 }
+
+const lcFirst = (x: string) => (/^[A-ZÁÉÍÓÚÑ][a-záéíóúñ]/.test(x) ? x[0].toLowerCase() + x.slice(1) : x);
 
 function t(lang: Lang, es: string, en: string) {
   return lang === 'en' ? en : es;
@@ -441,3 +606,35 @@ export function extractAnswer(kb: ToolOutcome, question: string, maxLen: number,
 }
 
 export type { ChatMessage };
+
+/** Body text of the knowledge section whose heading mentions `topic` (e.g. the specialty), limited in length. */
+const GENERIC_WORDS = new Set(['consulta', 'consultation', 'control', 'para', 'cita', 'appointment', 'valoracion', 'assessment', 'tratamiento', 'treatment']);
+
+export function sectionAbout(kb: ToolOutcome, topic: string, maxLen = 320): string {
+  // Use the most specific word of the topic ("Consulta de ortopedia" → "ortopedia").
+  const words = norm(topic)
+    .split(/[^a-z]+/)
+    .filter((w) => w.length > 3 && !GENERIC_WORDS.has(w))
+    .sort((a, b) => b.length - a.length);
+  const stem = (words[0] ?? norm(topic)).slice(0, 6);
+  const results = (kb.data?.results as { content: string }[]) ?? [];
+  for (const r of results) {
+    let current = '';
+    const bodies: Record<string, string[]> = {};
+    for (const raw of r.content.split('\n')) {
+      const line = raw.trim();
+      if (!line) continue;
+      if (/^#+\s/.test(line)) {
+        current = norm(line.replace(/^#+\s/, ''));
+        continue;
+      }
+      (bodies[current] ??= []).push(line);
+    }
+    const key = Object.keys(bodies).find((h) => h && h.includes(stem));
+    if (key) {
+      const text = bodies[key].join(' ');
+      return text.length > maxLen ? `${text.slice(0, text.lastIndexOf('.', maxLen) + 1 || maxLen)}` : text;
+    }
+  }
+  return '';
+}

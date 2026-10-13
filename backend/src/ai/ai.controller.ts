@@ -1,4 +1,7 @@
-import { Body, Controller, Get, Param, ParseUUIDPipe, Patch, Post, Query } from '@nestjs/common';
+import { Body, Controller, Get, Param, ParseUUIDPipe, Patch, Post, Query, Res } from '@nestjs/common';
+import type { Response } from 'express';
+import { RawResponse } from '../common/decorators/auth.decorators';
+import { streamTurn } from '../common/utils/sse';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { z } from 'zod';
 import { RequirePermissions } from '../common/decorators/auth.decorators';
@@ -17,7 +20,7 @@ import { ToolRegistry } from './tools/tool-registry';
 import { ConversationsService } from '../conversations/conversations.service';
 
 const actionSchema = z
-  .object({ type: z.enum(['book_slot', 'confirm_cancel', 'start_reschedule', 'reschedule_to', 'select_doctor']) })
+  .object({ type: z.enum(['book_slot', 'confirm_cancel', 'start_reschedule', 'reschedule_to', 'select_doctor', 'confirm_attendance', 'give_consent']) })
   .catchall(z.union([z.string().max(200), z.number(), z.null()]));
 
 export const chatSchema = z.object({
@@ -51,6 +54,22 @@ export class AiController {
   @ApiOperation({ summary: 'Talk to Alejandro AI as a patient (playground). Returns the full observability trace.' })
   @ApiZodBody(chatSchema)
   async send(@Body(zv(chatSchema)) dto: z.infer<typeof chatSchema>) {
+    const { conversationId, welcome } = await this.playgroundConversation(dto);
+    const result = await this.chat.send(conversationId, dto.message, dto.action ?? null);
+    return { ...result, welcome };
+  }
+
+  @Post('ai/chat/stream')
+  @RequirePermissions('ai.playground')
+  @RawResponse()
+  @ApiOperation({ summary: 'Same as /ai/chat but streamed as Server-Sent Events: step (agent progress), delta (answer text), done (full result).' })
+  @ApiZodBody(chatSchema)
+  async sendStream(@Body(zv(chatSchema)) dto: z.infer<typeof chatSchema>, @Res() res: Response) {
+    const { conversationId, welcome } = await this.playgroundConversation(dto);
+    await streamTurn(res, async (onStep) => ({ ...(await this.chat.send(conversationId, dto.message, dto.action ?? null, onStep)), welcome }));
+  }
+
+  private async playgroundConversation(dto: z.infer<typeof chatSchema>) {
     let conversationId = dto.conversationId;
     let welcome = null;
     if (!conversationId) {
@@ -61,8 +80,7 @@ export class AiController {
       const conv = await this.conversations.getRaw(conversationId);
       if (conv.channel !== 'PLAYGROUND') throw new ForbiddenError('NOT_PLAYGROUND', 'Only playground conversations can be driven from this endpoint');
     }
-    const result = await this.chat.send(conversationId, dto.message, dto.action ?? null);
-    return { ...result, welcome };
+    return { conversationId, welcome };
   }
 
   @Post('ai/playground/start')
@@ -82,7 +100,8 @@ export class AiController {
   @RequirePermissions('settings.manage')
   async getConfig() {
     const agent = await this.config.get();
-    return { agent, providers: this.llm.availability(), models: SUPPORTED_MODELS };
+    const effective = this.llm.resolve(agent.provider, agent.model);
+    return { agent, providers: this.llm.availability(), models: SUPPORTED_MODELS, effective: { provider: effective.provider.name, model: effective.model, fallback: effective.fallback } };
   }
 
   @Patch('ai/config')

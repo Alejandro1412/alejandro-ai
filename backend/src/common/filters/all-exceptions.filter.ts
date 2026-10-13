@@ -1,3 +1,5 @@
+import { captureException } from '../observability';
+import { TenantContext } from '../../database/tenant';
 import { ArgumentsHost, Catch, ExceptionFilter, HttpException, HttpStatus, Logger } from '@nestjs/common';
 import { ThrottlerException } from '@nestjs/throttler';
 import type { Response } from 'express';
@@ -18,7 +20,11 @@ export class AllExceptionsFilter implements ExceptionFilter {
     if (host.getType() !== 'http') return;
     const res = host.switchToHttp().getResponse<Response>();
     const { status, body } = this.toBody(exception);
-    if (status >= 500) this.logger.error(exception instanceof Error ? exception.stack : String(exception));
+    if (status >= 500) {
+      this.logger.error(exception instanceof Error ? exception.stack : String(exception));
+      const ctx = TenantContext.current();
+      captureException(exception, { organizationId: ctx?.organizationId, requestId: ctx?.requestId });
+    }
     res.status(status).json(body);
   }
 

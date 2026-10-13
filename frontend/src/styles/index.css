@@ -329,3 +329,25 @@
   0% { transform: translateY(-100%); }
   100% { transform: translateY(260%); }
 }
+
+/* Journey stepper: only the current step is labelled in narrow chats (widget, phones);
+   all labels show once the chat column is wide enough. Hidden labels stay readable by screen readers. */
+.journey {
+  container-type: inline-size;
+}
+.journey-label:not(.journey-label-active) {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+@container (min-width: 500px) {
+  .journey-label:not(.journey-label-active) {
+    position: static;
+    width: auto;
+    height: auto;
+    clip: auto;
+  }
+}

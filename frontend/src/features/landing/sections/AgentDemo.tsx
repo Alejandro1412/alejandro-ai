@@ -1,4 +1,5 @@
-import { HiCheckCircle, HiOutlineCalendarDays } from 'react-icons/hi2';
+import { HiCheckCircle, HiOutlineCalendarDays, HiOutlineChatBubbleOvalLeftEllipsis } from 'react-icons/hi2';
+import { openLandingChat } from './LandingChatWidget';
 import { AgentAvatar } from '@/components/brand/Logo';
 import { usePreferences, useT, type TKey } from '@/contexts/PreferencesContext';
 import { gsap } from '@/lib/motion/gsap';
@@ -93,6 +94,14 @@ export function AgentDemo() {
                 </li>
               ))}
             </ol>
+            <button
+              type="button"
+              onClick={openLandingChat}
+              className="mt-9 inline-flex items-center gap-2 rounded-xl border border-white/15 bg-white/5 px-4 py-2.5 text-sm font-semibold text-white backdrop-blur transition hover:bg-white/10"
+            >
+              <HiOutlineChatBubbleOvalLeftEllipsis className="text-lg text-accent" aria-hidden="true" />
+              {t('landing.tryItYourself')}
+            </button>
           </div>
 
           <div className="grid gap-4 sm:grid-cols-[minmax(0,1fr)_minmax(0,0.85fr)] lg:grid-cols-1 xl:grid-cols-[minmax(0,1fr)_minmax(0,0.8fr)]" aria-hidden="true">

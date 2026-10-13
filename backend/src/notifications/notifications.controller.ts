@@ -1,8 +1,9 @@
-import { Controller, Get, Param, ParseUUIDPipe, Post, Query } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Headers, Param, ParseUUIDPipe, Post, Query } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { z } from 'zod';
 import { AuthUser, CurrentUser, RequirePermissions } from '../common/decorators/auth.decorators';
-import { ApiZodQuery, zv } from '../common/pipes/zod.pipe';
+import { ApiZodBody, ApiZodQuery, zv } from '../common/pipes/zod.pipe';
+import { PushService, pushSubscriptionSchema } from './push.service';
 import { paginationSchema } from '../common/utils/pagination';
 import { NotificationsService } from './notifications.service';
 import { ChannelProviders } from './providers/channel-providers';
@@ -16,7 +17,24 @@ export class NotificationsController {
   constructor(
     private readonly notifications: NotificationsService,
     private readonly providers: ChannelProviders,
+    private readonly push: PushService,
   ) {}
+
+  @Get('push/public-key')
+  pushKey() {
+    return this.push.publicKey();
+  }
+
+  @Post('push/subscribe')
+  @ApiZodBody(pushSubscriptionSchema)
+  subscribe(@CurrentUser() user: AuthUser, @Body(zv(pushSubscriptionSchema)) dto: z.infer<typeof pushSubscriptionSchema>, @Headers('user-agent') ua?: string) {
+    return this.push.subscribe(user.userId, dto, ua);
+  }
+
+  @Delete('push/subscribe')
+  unsubscribe(@CurrentUser() user: AuthUser, @Body(zv(z.object({ endpoint: z.string().url().max(1000) }))) dto: { endpoint: string }) {
+    return this.push.unsubscribe(user.userId, dto.endpoint);
+  }
 
   @Get()
   @ApiZodQuery(listSchema)

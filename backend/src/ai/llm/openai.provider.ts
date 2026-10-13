@@ -35,11 +35,19 @@ export class OpenAIProvider implements LLMProvider {
     ];
   }
 
+  /**
+   * GPT-4.x accepts `temperature`; reasoning-era models (GPT-5+, o-series) only accept the default, and
+   * every current model takes `max_completion_tokens` instead of the legacy `max_tokens`.
+   */
+  static acceptsTemperature(model: string): boolean {
+    return /^gpt-4/.test(model);
+  }
+
   async complete(req: LLMRequest): Promise<LLMResponse> {
     const body = {
       model: req.model,
-      temperature: req.temperature,
-      max_tokens: req.maxTokens,
+      ...(OpenAIProvider.acceptsTemperature(req.model) ? { temperature: req.temperature } : {}),
+      max_completion_tokens: req.maxTokens,
       messages: OpenAIProvider.toMessages(req.system, req.messages),
       ...(req.tools.length
         ? { tools: req.tools.map((t) => ({ type: 'function', function: { name: t.name, description: t.description, parameters: t.parameters } })), tool_choice: 'auto' }

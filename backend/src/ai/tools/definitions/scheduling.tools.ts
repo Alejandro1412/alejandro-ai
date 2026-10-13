@@ -29,6 +29,11 @@ const cardShape = z.object({
   when: z.string(),
   status: z.string(),
   location: z.string().nullable(),
+  videoUrl: z.string().nullable().optional(),
+  paymentUrl: z.string().nullable().optional(),
+  depositAmount: z.string().nullable().optional(),
+  intakeUrl: z.string().nullable().optional(),
+  patientConfirmed: z.boolean().optional(),
 });
 
 function presentSlots(out: SlotsOutput, ctx: ToolContext): Attachment[] {
@@ -214,7 +219,7 @@ export function schedulingTools(d: ToolDeps) {
       const appt = await d.appointments
         .create(
           { doctorId: input.doctorId, patientId: ctx.patientId!, serviceId: input.serviceId ?? null, startTime: new Date(input.startTime), notes: input.notes ?? null, status: 'CONFIRMED' },
-          { source: ctx.channel === 'WHATSAPP' ? 'WHATSAPP' : 'AI', conversationId: ctx.conversationId },
+          { source: ctx.channel === 'WHATSAPP' ? 'WHATSAPP' : ctx.channel === 'PHONE' ? 'PHONE' : 'AI', conversationId: ctx.conversationId },
         )
         .catch(asToolFailure);
       await d.patients.updatePreferences(ctx.patientId!, { preferredDoctorId: input.doctorId });

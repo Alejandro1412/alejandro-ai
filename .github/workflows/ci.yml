@@ -53,6 +53,9 @@ jobs:
       - name: Test (backend unit + e2e against Postgres/pgvector, frontend components)
         run: npm test
 
+      - name: AI evaluation suite (local engine)
+        run: npm run eval -w backend
+
       - name: Build
         run: npm run build
 

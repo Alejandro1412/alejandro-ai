@@ -17,7 +17,8 @@
     "db:seed": "ts-node --transpile-only src/database/seed/seed.ts",
     "db:reset": "npm run db:migrate && npm run db:seed",
     "db:migrate:prod": "node dist/database/migrate.js",
-    "db:seed:prod": "node dist/database/seed/seed.js"
+    "db:seed:prod": "node dist/database/seed/seed.js",
+    "eval": "ts-node --transpile-only eval/run-eval.ts"
   },
   "dependencies": {
     "@nestjs/common": "^11.2.6",
@@ -29,6 +30,8 @@
     "@nestjs/swagger": "^11.4.7",
     "@nestjs/throttler": "^6.7.1",
     "@nestjs/websockets": "^11.2.6",
+    "@sentry/node": "^10.75.3",
+    "@socket.io/redis-adapter": "^8.3.0",
     "argon2": "^0.45.1",
     "bullmq": "^6.3.9",
     "class-transformer": "^0.5.1",
@@ -46,6 +49,7 @@
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.2",
     "socket.io": "^4.8.4",
+    "web-push": "^3.6.7",
     "zod": "^4.6.5"
   },
   "devDependencies": {
@@ -61,6 +65,7 @@
     "@types/node": "^22.20.4",
     "@types/pg": "^8.23.1",
     "@types/supertest": "^7.2.1",
+    "@types/web-push": "^3.6.4",
     "drizzle-kit": "^0.31.11",
     "eslint": "^9.39.5",
     "globals": "^17.12.0",

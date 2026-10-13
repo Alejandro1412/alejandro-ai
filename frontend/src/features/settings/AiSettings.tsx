@@ -10,7 +10,7 @@ import { useT } from '@/contexts/PreferencesContext';
 import { api, errorMessage } from '@/lib/api';
 import type { AgentConfig } from '@/types';
 
-type Cfg = { agent: AgentConfig; providers: Record<string, boolean>; models: Record<string, string[]> };
+type Cfg = { agent: AgentConfig; providers: Record<string, boolean>; models: Record<string, string[]>; effective?: { provider: string; model: string; fallback: boolean } };
 const CHANNELS = ['IN_APP', 'EMAIL', 'WHATSAPP', 'SMS'];
 
 export default function AiSettings() {
@@ -111,13 +111,33 @@ export default function AiSettings() {
               ))}
             </Select>
           </Field>
-          <Field label={t('settings.model')}>
-            <Select value={a.model} onChange={(e) => set('model', e.target.value)}>
-              {models.map((m) => (
-                <option key={m}>{m}</option>
-              ))}
-            </Select>
+          <Field label={t('settings.model')} hint={a.provider === 'mock' ? undefined : t('settings.modelHint')}>
+            {a.provider === 'mock' ? (
+              <Select value={a.model} onChange={(e) => set('model', e.target.value)}>
+                {models.map((m) => (
+                  <option key={m}>{m}</option>
+                ))}
+              </Select>
+            ) : (
+              <>
+                <Input list="model-suggestions" value={a.model} onChange={(e) => set('model', e.target.value.trim())} spellCheck={false} autoComplete="off" />
+                <datalist id="model-suggestions">
+                  {models.map((m) => (
+                    <option key={m} value={m} />
+                  ))}
+                </datalist>
+              </>
+            )}
           </Field>
+          {q.data.effective && (
+            <div className="rounded-xl border border-border bg-surface-2 p-3 text-sm sm:col-span-2">
+              <p className="font-medium">
+                {t('settings.effective')}: <span className="font-mono text-primary">{q.data.effective.provider} · {q.data.effective.model}</span>
+                {q.data.effective.provider !== q.data.agent.provider && !q.data.effective.fallback && <span className="text-ink-3"> — {t('settings.platformDefault')}</span>}
+              </p>
+              {q.data.effective.provider === 'mock' && <p className="mt-1 text-xs text-ink-3">{t('settings.mockNote')}</p>}
+            </div>
+          )}
           <Field label={`${t('settings.temperature')}: ${a.temperature}`}>
             <input type="range" min={0} max={1} step={0.1} value={a.temperature} onChange={(e) => set('temperature', Number(e.target.value))} className="w-full accent-[rgb(var(--primary))]" />
           </Field>

@@ -1,9 +1,12 @@
-import { Body, Controller, Get, Module, Param, ParseUUIDPipe, Patch, Post, Query } from '@nestjs/common';
+import { Body, Controller, Get, Module, Param, ParseUUIDPipe, Patch, Post, Query, Res } from '@nestjs/common';
+import type { Response } from 'express';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { z } from 'zod';
-import { RequirePermissions } from '../common/decorators/auth.decorators';
+import { RawResponse, RequirePermissions } from '../common/decorators/auth.decorators';
+import { streamTurn } from '../common/utils/sse';
+import { publicStep, publicTurn } from '../ai/public-turn';
 import { ApiZodBody, ApiZodQuery, zv } from '../common/pipes/zod.pipe';
-import { ForbiddenError } from '../common/errors/app-error';
+import { ForbiddenError, NotFoundError } from '../common/errors/app-error';
 import { TenantContext } from '../database/tenant';
 import { AiModule } from '../ai/ai.module';
 import { ChatService } from '../ai/chat.service';
@@ -18,13 +21,16 @@ import { DoctorsModule } from '../doctors/doctors.module';
 import { DoctorsService } from '../doctors/doctors.service';
 import { PatientsModule } from '../patients/patients.module';
 import { PatientsService } from '../patients/patients.service';
+import { PrivacyService } from '../privacy/privacy.service';
 import { chatSchema } from '../ai/ai.controller';
+import { feedbackSchema } from '../conversations/conversations.controller';
 
 const profileSchema = z.object({
   phone: z.string().trim().regex(/^\+?[0-9 ()-]{7,20}$/).optional(),
   email: z.string().trim().toLowerCase().email().optional(),
   preferredLanguage: z.enum(['es', 'en']).optional(),
 });
+const consentPatchSchema = z.object({ marketing: z.boolean() });
 const bookSchema = z.object({ doctorId: z.string().uuid(), startTime: z.coerce.date(), serviceId: z.string().uuid().nullable().optional() });
 const slotsSchema = z.object({
   specialtyId: z.string().uuid().optional(),
@@ -48,7 +54,27 @@ export class PortalController {
     private readonly doctors: DoctorsService,
     private readonly chat: ChatService,
     private readonly conversations: ConversationsService,
+    private readonly privacy: PrivacyService,
   ) {}
+
+  /** Right of access / portability for the patient themself. */
+  @Get('me/export')
+  export() {
+    return this.privacy.export(this.patientId());
+  }
+
+  @Get('me/consents')
+  consents() {
+    return this.privacy.history(this.patientId());
+  }
+
+  /** Patients can grant or withdraw marketing consent (reminders of follow-ups, campaigns, review requests). */
+  @Patch('me/consents')
+  @ApiZodBody(consentPatchSchema)
+  async updateConsent(@Body(zv(consentPatchSchema)) dto: z.infer<typeof consentPatchSchema>) {
+    await this.privacy.record({ patientId: this.patientId(), kind: 'MARKETING', granted: dto.marketing, channel: 'PORTAL' });
+    return this.privacy.history(this.patientId());
+  }
 
   private patientId(): string {
     const id = TenantContext.principal().patientId;
@@ -61,8 +87,8 @@ export class PortalController {
     const p = await this.patients.get(this.patientId(), { audit: false });
     const clinic = await this.clinics.current();
     return {
-      patient: { id: p.id, firstName: p.firstName, lastName: p.lastName, email: p.email, phone: p.phone, preferredLanguage: p.preferredLanguage },
-      clinic: { name: clinic.name, phone: clinic.phone, email: clinic.email, address: clinic.address, city: clinic.city, timezone: clinic.timezone, businessHours: clinic.businessHours },
+      patient: { id: p.id, firstName: p.firstName, lastName: p.lastName, email: p.email, phone: p.phone, preferredLanguage: p.preferredLanguage, consentAt: p.consentAt, marketingConsentAt: p.marketingConsentAt },
+      clinic: { privacyPolicyUrl: clinic.privacyPolicyUrl, slug: clinic.slug, name: clinic.name, phone: clinic.phone, email: clinic.email, address: clinic.address, city: clinic.city, timezone: clinic.timezone, businessHours: clinic.businessHours },
       locations: await this.clinics.listLocations(),
     };
   }
@@ -131,18 +157,38 @@ export class PortalController {
   @Post('chat')
   @ApiZodBody(chatSchema)
   async chatSend(@Body(zv(chatSchema)) dto: z.infer<typeof chatSchema>) {
+    const { conversationId, welcome } = await this.portalConversation(dto);
+    return publicTurn(await this.chat.send(conversationId, dto.message, dto.action ?? null), welcome);
+  }
+
+  @Post('chat/stream')
+  @RawResponse()
+  @ApiZodBody(chatSchema)
+  async chatStream(@Body(zv(chatSchema)) dto: z.infer<typeof chatSchema>, @Res() res: Response) {
+    const { conversationId, welcome } = await this.portalConversation(dto);
+    await streamTurn(res, async (onStep) => publicTurn(await this.chat.send(conversationId, dto.message, dto.action ?? null, publicStep(onStep)), welcome));
+  }
+
+  @Post('chat/:conversationId/messages/:messageId/feedback')
+  @ApiZodBody(feedbackSchema)
+  async feedback(@Param('conversationId', ParseUUIDPipe) conversationId: string, @Param('messageId', ParseUUIDPipe) messageId: string, @Body(zv(feedbackSchema)) dto: z.infer<typeof feedbackSchema>) {
+    const conv = await this.conversations.getRaw(conversationId);
+    if (conv.patientId !== this.patientId()) throw new NotFoundError('Conversation', conversationId);
+    return this.conversations.setFeedback(conversationId, messageId, dto.value);
+  }
+
+  private async portalConversation(dto: z.infer<typeof chatSchema>) {
     let conversationId = dto.conversationId;
     let welcome = null;
     if (conversationId) {
       const conv = await this.conversations.getRaw(conversationId);
-      if (conv.patientId !== this.patientId()) throw new ForbiddenError('NOT_OWNER', 'Not your conversation');
+      if (conv.patientId !== this.patientId()) throw new NotFoundError('Conversation', conversationId);
     } else {
       const started = await this.chat.start({ channel: 'PORTAL', patientId: this.patientId(), language: dto.language });
       conversationId = started.conversation.id;
       welcome = started.welcome;
     }
-    const r = await this.chat.send(conversationId, dto.message, dto.action ?? null);
-    return { conversationId: r.conversationId, userMessage: r.userMessage, assistantMessage: r.assistantMessage, conversationStatus: r.conversationStatus, welcome };
+    return { conversationId, welcome };
   }
 
   @Get('chat')
@@ -150,8 +196,13 @@ export class PortalController {
     const list = await this.conversations.list({ page: 1, pageSize: 1, patientId: this.patientId(), channel: 'PORTAL' });
     const latest = list.items[0];
     if (!latest) return null;
-    const msgs = await this.conversations.messages(latest.id, 100);
-    return { conversationId: latest.id, status: latest.status, messages: msgs.map((m) => ({ id: m.id, role: m.role, content: m.content, attachments: m.attachments, createdAt: m.createdAt })) };
+    const [msgs, conv] = await Promise.all([this.conversations.messages(latest.id, 100), this.conversations.getRaw(latest.id)]);
+    return {
+      conversationId: latest.id,
+      status: latest.status,
+      journey: (conv.metadata as Record<string, unknown>)?.journey ?? null,
+      messages: msgs.map((m) => ({ id: m.id, role: m.role, content: m.content, attachments: m.attachments, feedback: m.feedback, createdAt: m.createdAt })),
+    };
   }
 }
 

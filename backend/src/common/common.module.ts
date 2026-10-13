@@ -1,5 +1,6 @@
 import { Global, Module } from '@nestjs/common';
 import { JwtModule } from '@nestjs/jwt';
+import { ActionTokensService } from '../actions/action-tokens.service';
 import { AuditService } from '../audit/audit.service';
 import { CacheService } from '../jobs/cache.service';
 import { QueueService } from '../jobs/queue.service';
@@ -11,7 +12,7 @@ import { RealtimeGateway } from '../realtime/realtime.gateway';
 @Global()
 @Module({
   imports: [JwtModule.register({})],
-  providers: [AuditService, CacheService, QueueService, RbacService, RealtimeGateway, EventsService],
-  exports: [JwtModule, AuditService, CacheService, QueueService, RbacService, EventsService],
+  providers: [ActionTokensService, AuditService, CacheService, QueueService, RbacService, RealtimeGateway, EventsService],
+  exports: [JwtModule, ActionTokensService, AuditService, CacheService, QueueService, RbacService, EventsService],
 })
 export class CommonModule {}

@@ -8,7 +8,15 @@ import {
   HiOutlineUserGroup,
   HiOutlineXCircle,
   HiOutlineArrowPath,
+  HiOutlineArrowDownTray,
+  HiOutlineArrowTopRightOnSquare,
+  HiOutlineClipboardDocumentList,
+  HiOutlineClock,
+  HiOutlineCreditCard,
+  HiOutlineShieldCheck,
+  HiOutlineVideoCamera,
 } from 'react-icons/hi2';
+import { downloadIcs, googleCalendarUrl, hasValidTimes } from '@/lib/calendar';
 import { useT } from '@/contexts/PreferencesContext';
 import { cn } from '@/lib/format';
 import type { Attachment, CardAppointment, ChatAction } from '@/types';
@@ -28,7 +36,7 @@ export function Attachments({ items, onSend, disabled }: { items: Attachment[]; 
           case 'doctors':
             return <DoctorCards key={i} a={a} onSend={onSend} disabled={disabled} />;
           case 'appointment':
-            return <AppointmentCard key={i} appt={a.appointment} state={a.state} />;
+            return <AppointmentCard key={i} appt={a.appointment} state={a.state} actions />;
           case 'appointments':
             return <AppointmentList key={i} a={a} onSend={onSend} disabled={disabled} />;
           case 'citations':
@@ -39,6 +47,10 @@ export function Attachments({ items, onSend, disabled }: { items: Attachment[]; 
             return <HandoffNotice key={i} a={a} />;
           case 'emergency':
             return <EmergencyNotice key={i} />;
+          case 'confirm':
+            return <ConfirmCard key={i} a={a} onSend={onSend} disabled={disabled} />;
+          case 'consent':
+            return <ConsentCard key={i} a={a} onSend={onSend} disabled={disabled} />;
           case 'suggestions':
             return null; // rendered by the thread under the last message
           default:
@@ -145,7 +157,98 @@ function DoctorCards({ a, onSend, disabled }: { a: Extract<Attachment, { type: '
   );
 }
 
-export function AppointmentCard({ appt, state }: { appt: CardAppointment; state: 'created' | 'cancelled' | 'rescheduled' | 'info' }) {
+/** The assistant understood a choice from free text and asks for an explicit yes before acting. */
+function ConfirmCard({ a, onSend, disabled }: { a: Extract<Attachment, { type: 'confirm' }>; onSend?: SendFn; disabled?: boolean }) {
+  const [answered, setAnswered] = useState(false);
+  const go = (fn: () => void) => {
+    setAnswered(true);
+    fn();
+  };
+  return (
+    <div className="overflow-hidden rounded-2xl border border-primary/30 bg-surface shadow-card">
+      <div className="flex items-center gap-2 bg-primary-soft px-3.5 py-2 text-sm font-semibold text-primary">
+        <HiOutlineCalendarDays aria-hidden="true" />
+        {a.title}
+      </div>
+      <p className="px-3.5 pt-3 text-sm font-medium cap-first text-ink">{a.body}</p>
+      {onSend && (
+        <div className="flex flex-wrap gap-2 p-3.5">
+          <button
+            type="button"
+            disabled={disabled || answered}
+            onClick={() => go(() => onSend(a.confirmLabel, a.action))}
+            className="inline-flex items-center gap-1.5 rounded-xl bg-primary px-3.5 py-2 text-sm font-semibold text-primary-fg transition hover:bg-primary-strong disabled:opacity-50"
+          >
+            <HiOutlineCheckCircle aria-hidden="true" /> {a.confirmLabel}
+          </button>
+          <button type="button" disabled={disabled || answered} onClick={() => go(() => onSend(a.cancelMessage))} className="rounded-xl border border-border px-3.5 py-2 text-sm font-medium text-ink-2 transition hover:bg-surface-2 disabled:opacity-50">
+            {a.cancelLabel}
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Data-processing consent requested before the assistant stores personal data (sends `give_consent`). */
+function ConsentCard({ a, onSend, disabled }: { a: Extract<Attachment, { type: 'consent' }>; onSend?: SendFn; disabled?: boolean }) {
+  const t = useT();
+  const [answer, setAnswer] = useState<'yes' | 'no' | null>(null);
+  const give = (granted: 'yes' | 'no') => {
+    if (!onSend) return;
+    setAnswer(granted);
+    onSend(granted === 'yes' ? a.acceptLabel : a.declineLabel, { type: 'give_consent', granted });
+  };
+  return (
+    <div className="overflow-hidden rounded-2xl border border-primary/30 bg-surface shadow-card">
+      <div className="flex items-center gap-2 bg-primary-soft px-3.5 py-2 text-sm font-semibold text-primary">
+        <HiOutlineShieldCheck aria-hidden="true" />
+        {t('pub.chat.consentTitle')}
+      </div>
+      <p className="px-3.5 pt-3 text-sm text-ink">{a.text}</p>
+      <a
+        href={a.privacyUrl}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="mx-3.5 mt-2 inline-flex items-center gap-1 text-sm font-medium text-primary hover:underline"
+      >
+        {t('pub.chat.privacyLink')}
+        <HiOutlineArrowTopRightOnSquare aria-hidden="true" />
+        <span className="sr-only">{t('pub.chat.newTab')}</span>
+      </a>
+      {onSend && (
+        <div className="flex flex-wrap gap-2 p-3.5">
+          <button
+            type="button"
+            disabled={disabled || answer !== null}
+            aria-pressed={answer === 'yes'}
+            onClick={() => give('yes')}
+            className="inline-flex items-center gap-1.5 rounded-xl bg-primary px-3.5 py-2 text-sm font-semibold text-primary-fg transition hover:bg-primary-strong disabled:opacity-50"
+          >
+            <HiOutlineCheckCircle aria-hidden="true" /> {a.acceptLabel}
+          </button>
+          <button
+            type="button"
+            disabled={disabled || answer !== null}
+            aria-pressed={answer === 'no'}
+            onClick={() => give('no')}
+            className="rounded-xl border border-border px-3.5 py-2 text-sm font-medium text-ink-2 transition hover:bg-surface-2 disabled:opacity-50"
+          >
+            {a.declineLabel}
+          </button>
+        </div>
+      )}
+      {answer && (
+        <p role="status" className="border-t border-border bg-surface-2/60 px-3.5 py-2 text-xs text-ink-2">
+          {answer === 'yes' ? t('pub.chat.consentAccepted') : t('pub.chat.consentDeclined')}
+        </p>
+      )}
+      {!onSend && <div className="pb-3" />}
+    </div>
+  );
+}
+
+export function AppointmentCard({ appt, state, actions }: { appt: CardAppointment; state: 'created' | 'cancelled' | 'rescheduled' | 'info'; actions?: boolean }) {
   const t = useT();
   const head = {
     created: { icon: HiOutlineCheckCircle, label: t('chat.booked'), cls: 'text-success bg-success-soft' },
@@ -158,6 +261,11 @@ export function AppointmentCard({ appt, state }: { appt: CardAppointment; state:
       <div className={cn('flex items-center gap-2 px-3.5 py-2 text-sm font-semibold', head.cls)}>
         <head.icon className="text-base" aria-hidden="true" />
         {head.label}
+        {appt.patientConfirmed && state !== 'cancelled' && (
+          <Badge tone="success" className="ml-auto">
+            <HiOutlineCheckCircle aria-hidden="true" /> {t('pub.chat.attendanceConfirmed')}
+          </Badge>
+        )}
       </div>
       <dl className="grid gap-1.5 px-3.5 py-3 text-sm">
         <div className="flex items-center gap-2 font-semibold cap-first text-ink">{appt.when}</div>
@@ -173,6 +281,58 @@ export function AppointmentCard({ appt, state }: { appt: CardAppointment; state:
           </div>
         )}
       </dl>
+      {state !== 'cancelled' && (appt.paymentUrl || appt.videoUrl || appt.intakeUrl) && (
+        <div className="space-y-2 px-3.5 pb-3">
+          {appt.paymentUrl && (
+            <>
+              <a
+                href={appt.paymentUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                data-no-underline
+                className="flex w-full items-center justify-center gap-1.5 rounded-xl bg-primary px-3.5 py-2.5 text-sm font-semibold text-primary-fg transition hover:bg-primary-strong"
+              >
+                <HiOutlineCreditCard aria-hidden="true" />
+                {appt.depositAmount ? t('pub.chat.payDeposit', { amount: appt.depositAmount }) : t('pub.chat.payDepositPlain')}
+                <span className="sr-only">{t('pub.chat.newTab')}</span>
+              </a>
+              <p className="flex items-start gap-1.5 text-xs text-warning">
+                <HiOutlineClock className="mt-0.5 shrink-0" aria-hidden="true" />
+                <span className="text-ink-2">{t('pub.chat.heldNote')}</span>
+              </p>
+            </>
+          )}
+          {appt.videoUrl && (
+            <a
+              href={appt.videoUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              data-no-underline
+              className="flex w-full items-center justify-center gap-1.5 rounded-xl border border-border bg-surface px-3.5 py-2 text-sm font-semibold text-ink transition hover:border-primary hover:text-primary"
+            >
+              <HiOutlineVideoCamera aria-hidden="true" /> {t('pub.chat.joinVideo')}
+              <span className="sr-only">{t('pub.chat.newTab')}</span>
+            </a>
+          )}
+          {appt.intakeUrl && (
+            <a href={appt.intakeUrl} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1.5 text-sm font-medium text-primary hover:underline">
+              <HiOutlineClipboardDocumentList aria-hidden="true" /> {t('pub.chat.intake')}
+              <span className="sr-only">{t('pub.chat.newTab')}</span>
+            </a>
+          )}
+        </div>
+      )}
+      {actions && (state === 'created' || state === 'rescheduled') && hasValidTimes(appt) && (
+        <div className="flex flex-wrap items-center gap-2 border-t border-border bg-surface-2/60 px-3.5 py-2.5 text-xs">
+          <span className="font-medium text-ink-2">{t('chat.addToCalendar')}:</span>
+          <button type="button" onClick={() => downloadIcs(appt)} className="inline-flex items-center gap-1 rounded-lg border border-border bg-surface px-2.5 py-1 font-semibold text-ink hover:border-primary hover:text-primary">
+            <HiOutlineArrowDownTray aria-hidden="true" /> {t('chat.downloadIcs')}
+          </button>
+          <a href={googleCalendarUrl(appt)} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 rounded-lg border border-border bg-surface px-2.5 py-1 font-semibold text-ink hover:border-primary hover:text-primary" data-no-underline>
+            <HiOutlineCalendarDays aria-hidden="true" /> {t('chat.googleCalendar')}
+          </a>
+        </div>
+      )}
     </div>
   );
 }

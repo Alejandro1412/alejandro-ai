@@ -56,6 +56,34 @@ curl -s localhost:3000/api/ai/chat -H "Authorization: Bearer $TOKEN" -H 'Content
 2. `POST /api/public/chat/{slug}/messages` with header `X-Chat-Session: <token>` and `{ "message": "…" }`.
 Traces are never returned on public endpoints.
 
+## Streaming chat (Server-Sent Events)
+
+`POST` with the same body as the JSON endpoint and `Accept: text/event-stream`:
+
+| Endpoint | Auth |
+|---|---|
+| `/api/ai/chat/stream` | staff with `ai.playground` (includes the full trace in `done`) |
+| `/api/portal/chat/stream` | patient |
+| `/api/public/chat/{slug}/messages/stream` | `X-Chat-Session` |
+
+Events: `step` (agent progress), `delta` (answer text), `done` (final result), `error`. See [ai-agent.md](ai-agent.md#streaming).
+
+## Feedback
+
+| Endpoint | Body |
+|---|---|
+| `POST /api/conversations/{id}/messages/{messageId}/feedback` (staff, playground) | `{ "value": 1 \| -1 \| null }` |
+| `POST /api/portal/chat/{conversationId}/messages/{messageId}/feedback` (patient) | same |
+| `POST /api/public/chat/{slug}/messages/{messageId}/feedback` (`X-Chat-Session`) | same |
+
+## Embeddable widget
+
+```html
+<script src="https://YOUR-APP/embed.js" data-clinic="your-clinic-slug" data-label="¿Necesitas una cita?" async></script>
+```
+
+Optional attributes: `data-color`, `data-position="left"`, `data-open="true"`. The chat runs in an isolated iframe (`/c/{slug}?embed=1`); `window.AlejandroAI.open()` / `.close()` control it from the host page.
+
 ## Webhooks
 
 | Endpoint | Verification |
@@ -275,3 +303,25 @@ Traces are never returned on public endpoints.
 | `GET` | `/api/integrations/whatsapp` |  |
 | `POST` | `/api/integrations/whatsapp/simulate |` |  |
 | `POST` | `/api/webhooks/stripe` | Stripe events (hidden from Swagger) |
+
+## v3 endpoints
+
+See [growth-and-operations.md](growth-and-operations.md) for behaviour. All listed under Swagger (`/api/docs`).
+
+| Area | Endpoints |
+|---|---|
+| Patient links (public) | `GET/POST /public/actions/:token` |
+| Waitlist | `GET/POST /waitlist`, `DELETE /waitlist/:id` |
+| Reviews & campaigns | `GET /reviews`, `GET/POST /campaigns`, `POST /campaigns/preview`, `POST /campaigns/:id/send` |
+| Value report | `GET /reports/value?month=YYYY-MM` |
+| Appointments | `POST /appointments/series`, `POST /appointments/series/:seriesId/cancel`, `GET /appointments/:id/intake`, `POST /appointments/:id/confirm-attendance` |
+| Privacy | `GET /patients/:id/consents`, `GET /patients/:id/export`, `POST /patients/:id/anonymize` · portal: `GET /portal/me/export`, `GET/PATCH /portal/me/consents` |
+| Imports | `POST /patients/import`, `POST /doctors/import`, `POST /knowledge/website` |
+| WhatsApp | `GET/PUT/DELETE /integrations/whatsapp/channel` |
+| Voice | `POST /webhooks/voice/:slug/incoming`, `POST /webhooks/voice/:slug/gather` (Twilio, signed), `GET /integrations/voice/status`, `POST /integrations/voice/simulate` |
+| Push | `GET /notifications/push/public-key`, `POST/DELETE /notifications/push/subscribe` |
+| Platform admin | `GET /admin/overview`, `GET /admin/tenants`, `GET /admin/tenants/:id`, `POST /admin/tenants/:id/{plan,extend-trial,suspend,reactivate,impersonate}` |
+| Ops | `GET /health/deep` |
+
+Errors added in v3: `402 SUBSCRIPTION_INACTIVE` (writes while expired/suspended), `410 ACTION_LINK_USED` / `ACTION_LINK_EXPIRED`,
+`409 ALREADY_ON_WAITLIST` / `OFFER_TAKEN` / `WHATSAPP_NUMBER_IN_USE`, `422 DEPOSIT_PENDING` / `ALREADY_ANONYMIZED`.

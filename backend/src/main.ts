@@ -8,6 +8,8 @@ import { loadEnv } from './config/env';
 
 async function bootstrap(): Promise<void> {
   const config = loadEnv();
+  const { initObservability } = await import('./common/observability');
+  await initObservability();
   const { AppModule } = await import('./app.module');
   const { configureApp } = await import('./app.setup');
   const app = await NestFactory.create<NestExpressApplication>(AppModule, { rawBody: true, bufferLogs: true });

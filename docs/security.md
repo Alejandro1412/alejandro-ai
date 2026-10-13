@@ -59,3 +59,16 @@ Recorded events include: login / logout / failed login, patient record access an
 ## Reporting
 
 Report vulnerabilities privately to the repository owner. Do not open public issues for security problems.
+
+## v3 controls
+
+- Patient action links: 256-bit tokens stored as SHA-256, scoped, expiring, single-use where it matters, audited.
+- Consent before storing chat data; consent evidence (version, channel, IP, user agent); export and anonymization.
+- Impersonation: platform-admin only, mandatory reason, 30-minute token with no refresh, visible banner, audited in both tenants.
+- Expired/suspended tenants are read-only (no data hostage; export works).
+- Per-clinic WhatsApp tokens encrypted with AES-256-GCM; a phone number can belong to only one clinic.
+- Twilio webhooks validated with `X-Twilio-Signature`; unsigned calls are rejected in production.
+- Sentry events have request bodies, headers, cookies and user data removed.
+- Backups can be encrypted (AES-256, PBKDF2) before leaving the server; restores verify SHA-256 checksums.
+- Compliance: these are technical controls that support a compliance program. The legal templates must be reviewed by a
+  lawyer; nothing in the product certifies HIPAA/GDPR/Ley 1581 compliance.

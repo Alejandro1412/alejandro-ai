@@ -20,6 +20,12 @@ export const updateClinicSchema = z.object({
   city: z.string().trim().max(120).nullable().optional(),
   country: z.string().trim().max(120).nullable().optional(),
   businessHours: businessHoursSchema.optional(),
+  privacyPolicyUrl: z.string().trim().url().max(500).nullable().optional(),
+  /** Bump when the privacy notice changes; new consents record the new version. */
+  consentVersion: z.string().trim().regex(/^[\w.-]{1,20}$/).optional(),
+  googleReviewUrl: z.string().trim().url().max(500).nullable().optional(),
+  depositsEnabled: z.boolean().optional(),
+  minutesSavedPerConversation: z.number().int().min(1).max(60).optional(),
 });
 
 export const locationSchema = z.object({
@@ -46,4 +52,21 @@ export const serviceSchema = z.object({
   priceCents: z.number().int().min(0).max(100_000_000).nullable().optional(),
   currency: z.string().length(3).toUpperCase().default('USD'),
   isActive: z.boolean().default(true),
+  /** Deposit charged to hold self-service bookings when the clinic enables deposits. */
+  depositCents: z.number().int().min(0).max(100_000_000).nullable().optional(),
+  /** Virtual service: bookings get a video-consultation link. */
+  isVirtual: z.boolean().optional(),
+  intakeFields: z
+    .array(
+      z.object({
+        key: z.string().regex(/^[a-z][a-zA-Z0-9_]{0,39}$/),
+        label: z.string().trim().min(2).max(160),
+        type: z.enum(['text', 'textarea', 'select', 'checkbox', 'date']),
+        required: z.boolean().optional(),
+        options: z.array(z.string().trim().min(1).max(80)).max(20).optional(),
+      }),
+    )
+    .max(15)
+    .refine((xs) => new Set(xs.map((x) => x.key)).size === xs.length, 'Field keys must be unique')
+    .optional(),
 });

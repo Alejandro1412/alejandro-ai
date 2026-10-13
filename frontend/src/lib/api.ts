@@ -22,6 +22,8 @@ export interface PageMeta {
 
 type Listener = (token: string | null) => void;
 let accessToken: string | null = null;
+/** This tab has run an impersonation session (survives until reload). */
+let impersonatedTab = false;
 const listeners = new Set<Listener>();
 
 export const tokenStore = {
@@ -38,7 +40,55 @@ export const tokenStore = {
 
 let refreshing: Promise<string | null> | null = null;
 
+/**
+ * Support impersonation (platform admins): a short-lived access token kept in sessionStorage for this
+ * tab only. While it is active the refresh cookie (the admin's own session) is never used.
+ */
+const IMP_KEY = 'aai.impersonation';
+export const impersonation = {
+  get(): { token: string; asUser: string; exp: number } | null {
+    try {
+      const raw = sessionStorage.getItem(IMP_KEY);
+      if (!raw) return null;
+      const v = JSON.parse(raw) as { token: string; asUser: string; exp: number };
+      impersonatedTab = true;
+      if (v.exp < Date.now()) {
+        sessionStorage.removeItem(IMP_KEY);
+        return null;
+      }
+      return v;
+    } catch {
+      return null;
+    }
+  },
+  start(token: string, asUser: string, expiresInSeconds: number) {
+    impersonatedTab = true;
+    try {
+      sessionStorage.setItem(IMP_KEY, JSON.stringify({ token, asUser, exp: Date.now() + expiresInSeconds * 1000 }));
+    } catch {
+      /* storage unavailable */
+    }
+  },
+  stop() {
+    try {
+      sessionStorage.removeItem(IMP_KEY);
+    } catch {
+      /* ignore */
+    }
+  },
+};
+
 export function refreshSession(): Promise<string | null> {
+  const imp = impersonation.get();
+  if (imp) {
+    tokenStore.set(imp.token);
+    return Promise.resolve(imp.token);
+  }
+  if (impersonatedTab) {
+    // Impersonation ended or expired: never fall back to the operator's own cookie silently in this tab.
+    tokenStore.set(null);
+    return Promise.resolve(null);
+  }
   refreshing ??= fetch('/api/auth/refresh', { method: 'POST', credentials: 'include' })
     .then(async (r) => {
       if (!r.ok) return null;
@@ -91,7 +141,12 @@ async function raw<T>(path: string, opts: RequestOptions, retried = false): Prom
     throw new ApiError(0, 'NETWORK_ERROR', 'No connection to the server');
   }
   if (res.status === 401 && !opts.anonymous && !retried) {
-    const token = await refreshSession();
+    const imp = impersonation.get();
+    const token = imp ? null : await refreshSession();
+    if (imp) {
+      impersonation.stop();
+      tokenStore.set(null);
+    }
     if (token) return raw<T>(path, opts, true);
   }
   const text = await res.text();
@@ -103,7 +158,68 @@ async function raw<T>(path: string, opts: RequestOptions, retried = false): Prom
   return { data: body.data as T, meta: body.meta };
 }
 
+/**
+ * POST that consumes a Server-Sent Events response (agent streaming). Calls `onEvent` for every
+ * `step`/`delta` event and resolves with the `done` payload. Non-stream error responses (auth,
+ * validation) use the normal JSON envelope and are thrown as ApiError, so callers can fall back.
+ */
+async function stream<T>(path: string, body: unknown, onEvent: (event: string, data: unknown) => void, opts: Omit<RequestOptions, 'method' | 'body'> = {}, retried = false): Promise<T> {
+  const headers: Record<string, string> = { Accept: 'text/event-stream', 'Content-Type': 'application/json', ...(opts.headers ?? {}) };
+  if (!opts.anonymous && accessToken) headers.Authorization = `Bearer ${accessToken}`;
+  let res: Response;
+  try {
+    res = await fetch(buildUrl(path), { method: 'POST', headers, credentials: 'include', signal: opts.signal, body: JSON.stringify(body ?? {}) });
+  } catch (err) {
+    if ((err as Error).name === 'AbortError') throw err;
+    throw new ApiError(0, 'NETWORK_ERROR', 'No connection to the server');
+  }
+  if (res.status === 401 && !opts.anonymous && !retried) {
+    const token = await refreshSession();
+    if (token) return stream<T>(path, body, onEvent, opts, true);
+  }
+  if (!res.ok || !res.headers.get('content-type')?.includes('text/event-stream') || !res.body) {
+    const text = await res.text().catch(() => '');
+    let e: { code?: string; message?: string; details?: Record<string, unknown> } | undefined;
+    try {
+      e = (JSON.parse(text) as { error?: typeof e }).error;
+    } catch {
+      /* not JSON */
+    }
+    throw new ApiError(res.status, e?.code ?? 'STREAM_UNAVAILABLE', e?.message ?? res.statusText, e?.details ?? {});
+  }
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let done: T | undefined;
+  for (;;) {
+    const { value, done: finished } = await reader.read();
+    if (value) buffer += decoder.decode(value, { stream: true });
+    let idx: number;
+    while ((idx = buffer.indexOf('\n\n')) >= 0) {
+      const chunk = buffer.slice(0, idx);
+      buffer = buffer.slice(idx + 2);
+      let event = 'message';
+      const data: string[] = [];
+      for (const line of chunk.split('\n')) {
+        if (line.startsWith('event:')) event = line.slice(6).trim();
+        else if (line.startsWith('data:')) data.push(line.slice(5).trim());
+      }
+      if (!data.length) continue; // heartbeat comment
+      const parsed = JSON.parse(data.join('\n')) as unknown;
+      if (event === 'done') done = parsed as T;
+      else if (event === 'error') {
+        const e = parsed as { code: string; message: string };
+        throw new ApiError(500, e.code, e.message);
+      } else onEvent(event, parsed);
+    }
+    if (finished) break;
+  }
+  if (done === undefined) throw new ApiError(0, 'STREAM_INTERRUPTED', 'The connection was interrupted');
+  return done;
+}
+
 export const api = {
+  stream,
   get: <T>(path: string, query?: RequestOptions['query'], signal?: AbortSignal) => raw<T>(path, { query, signal }).then((r) => r.data),
   page: <T>(path: string, query?: RequestOptions['query']) => raw<T[]>(path, { query }).then((r) => ({ items: r.data, meta: r.meta! })),
   post: <T>(path: string, body?: unknown, opts: Omit<RequestOptions, 'method' | 'body'> = {}) => raw<T>(path, { ...opts, method: 'POST', body: body ?? {} }).then((r) => r.data),

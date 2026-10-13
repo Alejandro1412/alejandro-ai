@@ -15,6 +15,9 @@ export interface AccessTokenPayload {
   clinic: string;
   role: string;
   patientId?: string | null;
+  /** Platform admin acting as this user (support impersonation; short-lived, audited, no refresh). */
+  imp?: string;
+  impName?: string;
 }
 
 /** Global guard: verifies the Bearer access token and binds tenant + principal to the request context. */
@@ -47,9 +50,10 @@ export class JwtAuthGuard implements CanActivate {
       principal: {
         kind: payload.role === 'PATIENT' ? 'PATIENT' : 'USER',
         id: payload.sub,
-        name: payload.name,
+        name: payload.imp ? `${payload.name} (soporte: ${payload.impName ?? 'admin'})` : payload.name,
         role: payload.role,
         permissions,
+        ...(payload.imp ? { impersonatedBy: payload.imp } : {}),
         patientId: payload.patientId ?? null,
       },
     });

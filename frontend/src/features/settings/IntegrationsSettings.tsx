@@ -12,6 +12,9 @@ import { useAuth } from '@/contexts/AuthContext';
 import { usePreferences, useT } from '@/contexts/PreferencesContext';
 import { api, errorMessage } from '@/lib/api';
 import { fmtRelative } from '@/lib/format';
+import { PushCard } from './PushCard';
+import { VoiceCard } from './VoiceCard';
+import { WhatsAppChannelCard } from './WhatsAppChannelCard';
 
 interface CalendarList {
   integrations: { id: string; provider: string; status: string; doctorId: string | null; accountEmail: string | null; error: string | null; connectedAt: string }[];
@@ -55,6 +58,7 @@ export default function IntegrationsSettings() {
 
   const connected = cal.data?.integrations.filter((i) => i.status === 'CONNECTED') ?? [];
   const webchatUrl = `${window.location.origin}/c/${me?.clinic.slug ?? ''}`;
+  const embedSnippet = `<script src="${window.location.origin}/embed.js" data-clinic="${me?.clinic.slug ?? ''}" data-label="${t('landing.chatLauncher')}" async></script>`;
 
   return (
     <>
@@ -161,6 +165,12 @@ export default function IntegrationsSettings() {
         )}
       </Card>
 
+      <WhatsAppChannelCard planAllows={wa.data?.planAllowsWhatsapp} />
+
+      <VoiceCard />
+
+      <PushCard />
+
       <Card>
         <CardHeader title={t('settings.webchat')} subtitle={t('settings.webchatBody')} icon={<HiOutlineChatBubbleOvalLeft />} />
         <div className="space-y-3 px-5 pb-5">
@@ -173,7 +183,20 @@ export default function IntegrationsSettings() {
               {t('common.open')}
             </a>
           </div>
-          <pre className="scrollbar-thin overflow-x-auto rounded-xl bg-surface-3 p-3 text-xs text-ink-2">{`<iframe src="${webchatUrl}" title="Alejandro AI" style="width:400px;height:640px;border:0;border-radius:16px"></iframe>`}</pre>
+          <div>
+            <p className="text-sm font-semibold">{t('settings.embedWidget')}</p>
+            <p className="mb-2 text-xs text-ink-3">{t('settings.embedWidgetBody')}</p>
+            <div className="relative">
+              <pre className="scrollbar-thin overflow-x-auto rounded-xl bg-surface-3 p-3 pr-20 text-xs text-ink-2">{embedSnippet}</pre>
+              <Button size="sm" variant="secondary" className="absolute right-2 top-2" onClick={() => void navigator.clipboard?.writeText(embedSnippet).then(() => toast.success(t('common.copied')))}>
+                {t('common.copy')}
+              </Button>
+            </div>
+          </div>
+          <details className="text-xs text-ink-3">
+            <summary className="cursor-pointer font-medium">{t('settings.iframeAlt')}</summary>
+            <pre className="scrollbar-thin mt-2 overflow-x-auto rounded-xl bg-surface-3 p-3 text-xs text-ink-2">{`<iframe src="${webchatUrl}?embed=1" title="Alejandro AI" style="width:400px;height:640px;border:0;border-radius:16px"></iframe>`}</pre>
+          </details>
         </div>
       </Card>
 

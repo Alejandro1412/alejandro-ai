@@ -6,6 +6,7 @@ import { ApiZodBody, ApiZodQuery, zv } from '../common/pipes/zod.pipe';
 import { AvailabilityService } from '../appointments/availability.service';
 import { doctorListSchema, doctorSchema, scheduleSchema, timeOffSchema } from './doctors.schemas';
 import { DoctorsService } from './doctors.service';
+import { csvImportSchema } from '../patients/patients.controller';
 
 const availabilityQuery = z.object({
   from: z.coerce.date().optional(),
@@ -41,6 +42,13 @@ export class DoctorsController {
   slots(@Param('id', ParseUUIDPipe) id: string, @Query(zv(availabilityQuery)) q: z.infer<typeof availabilityQuery>) {
     const from = q.from ?? new Date();
     return this.availability.findSlots({ doctorIds: [id], serviceId: q.serviceId, from, to: new Date(from.getTime() + q.days * 86_400_000), limit: 200 });
+  }
+
+  @Post('import')
+  @RequirePermissions('doctors.create')
+  @ApiZodBody(csvImportSchema)
+  import(@Body(zv(csvImportSchema)) dto: z.infer<typeof csvImportSchema>) {
+    return this.doctors.importCsv(dto.csv, dto.dryRun);
   }
 
   @Post()

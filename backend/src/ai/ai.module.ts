@@ -25,12 +25,16 @@ import { SummarizerService } from './orchestrator/summarizer.service';
 import { infoTools } from './tools/definitions/info.tools';
 import { patientOpsTools } from './tools/definitions/patient-ops.tools';
 import { schedulingTools } from './tools/definitions/scheduling.tools';
+import { engagementTools } from './tools/definitions/engagement.tools';
+import { EngagementModule } from '../engagement/engagement.module';
+import { EngagementService } from '../engagement/engagement.service';
+import { PrivacyService } from '../privacy/privacy.service';
 import type { AgentTool } from './tools/tool';
 import type { ToolDeps } from './tools/tool-deps';
 import { ToolRegistry, TOOLS } from './tools/tool-registry';
 
 @Module({
-  imports: [KnowledgeModule, ClinicsModule, DoctorsModule, AppointmentsModule, PatientsModule, ConversationsModule],
+  imports: [KnowledgeModule, ClinicsModule, DoctorsModule, AppointmentsModule, PatientsModule, ConversationsModule, EngagementModule],
   controllers: [AiController],
   providers: [
     AgentConfigService,
@@ -42,14 +46,14 @@ import { ToolRegistry, TOOLS } from './tools/tool-registry';
     ToolRegistry,
     {
       provide: TOOLS,
-      inject: [DB, KnowledgeService, ClinicsService, DoctorsService, AvailabilityService, AppointmentsService, PatientsService, NotificationsService, HandoffService, ConversationsService, SummarizerService],
+      inject: [DB, KnowledgeService, ClinicsService, DoctorsService, AvailabilityService, AppointmentsService, PatientsService, NotificationsService, HandoffService, ConversationsService, SummarizerService, EngagementService, PrivacyService],
       useFactory: (...deps: unknown[]): AgentTool[] => {
-        const [db, knowledge, clinics, doctors, availability, appointments, patients, notifications, handoff, conversations, summarizer] = deps;
-        const d = { db, knowledge, clinics, doctors, availability, appointments, patients, notifications, handoff, conversations, summarizer } as ToolDeps & { db: Database };
-        return [...infoTools(d), ...schedulingTools(d), ...patientOpsTools(d)] as AgentTool[];
+        const [db, knowledge, clinics, doctors, availability, appointments, patients, notifications, handoff, conversations, summarizer, engagement, privacy] = deps;
+        const d = { db, knowledge, clinics, doctors, availability, appointments, patients, notifications, handoff, conversations, summarizer, engagement, privacy } as ToolDeps & { db: Database };
+        return [...infoTools(d), ...schedulingTools(d), ...patientOpsTools(d), ...engagementTools(d)] as AgentTool[];
       },
     },
   ],
-  exports: [ChatService, OrchestratorService, AgentConfigService, SummarizerService],
+  exports: [ChatService, OrchestratorService, AgentConfigService, SummarizerService, LLMFactory],
 })
 export class AiModule {}

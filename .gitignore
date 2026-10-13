@@ -11,5 +11,6 @@ frontend/.env
 *.tsbuildinfo
 .vite/
 playwright-report/
-
-.vercel
+dump.rdb
+eval/report.json
+backups/

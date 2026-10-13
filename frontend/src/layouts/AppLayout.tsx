@@ -11,6 +11,7 @@ import { useToast } from '@/components/ui/Toast';
 import { useAuth } from '@/contexts/AuthContext';
 import { useT } from '@/contexts/PreferencesContext';
 import { NAV, type NavItem } from '@/config/nav';
+import { AccountBanners } from '@/features/admin/AccountBanners';
 import { api } from '@/lib/api';
 import { cn } from '@/lib/format';
 import { useRealtime } from '@/lib/realtime';
@@ -190,6 +191,7 @@ export function AppLayout() {
         </header>
 
         <main id="main" tabIndex={-1} className="mx-auto w-full max-w-[1440px] px-4 pb-28 pt-6 focus:outline-none sm:px-6 md:pb-10 lg:px-8">
+          <AccountBanners />
           <ErrorBoundary key={loc.pathname} title={t('errors.crashTitle')} body={t('errors.crashBody')} reloadLabel={t('errors.reload')} homeLabel={t('errors.goHome')}>
             <Suspense fallback={<PageLoader />}>
               <div key={loc.pathname} className="page-enter">

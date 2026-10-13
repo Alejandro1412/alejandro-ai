@@ -121,3 +121,55 @@ When the agent cannot ground an answer (no relevant knowledge, no tool data) the
 ## WhatsApp
 
 Inbound webhook → signature validation → idempotency by message id → patient lookup by phone → same orchestrator → response rendered for WhatsApp (cards become numbered options; replying “2” selects the second slot).
+
+## Conversation design (v2)
+
+**Open conversation, always guided.** The system prompt lets the model talk naturally about anything the user brings up (greetings, small talk, how it works, general questions, everyday topics) while keeping the safety rules, and requires every reply to end with one concrete next step. The local engine implements the same behaviour deterministically: capabilities, small talk (how are you, who are you, are you a bot, jokes, compliments, frustration), acknowledgements, polite answers to off-topic questions, preparation guidance, and follow-ups.
+
+**Follow-ups keep context.** Elliptical messages ("¿y cuánto cuesta?", "¿y los sábados?", "and for an ECG?") inherit the previous informational intent and its subject (service, specialty, doctor). Booking refinements ("por la tarde", "otros días", "el sábado") keep the specialty/doctor already chosen.
+
+**Answering cards in free text.** The options shown last turn (slots, appointment lists) are stored in the conversation metadata. `conversation/choice-resolver.ts` maps "el viernes a las 8", "3 pm", "la segunda", "the first one", "la de ortopedia" onto exactly one of them, asks to disambiguate when several match, and ignores unrelated text and contact data. A resolved booking or cancellation is **never executed directly**: the assistant replies with a `confirm` card and waits for "sí" or the button (when `bookingRules.requireConfirmation` is on, the default). "No" books nothing and re-shows the options.
+
+**Guided journey.** `conversation/journey.ts` derives the patient's position from what actually happened (tool results, cards, pending confirmations): booking `need → time → details → confirm → done`, cancel `choose → confirm → done`, reschedule `choose → time → confirm → done`. It is returned with every turn (`journey`), rendered as a progress bar in every chat surface, and given to the model as an instruction for the next step. Suggestions (quick replies) are journey-aware.
+
+**Memory for real models.** Previous assistant messages are replayed with a compact `[shown: …]` note listing the ids of cards they displayed, so Claude/GPT/Gemini can resolve "the second one" with the right `doctorId`/`startTime`.
+
+## Streaming
+
+`POST /api/ai/chat/stream`, `/api/portal/chat/stream` and `/api/public/chat/{slug}/messages/stream` return Server-Sent Events:
+
+| Event | Payload |
+|---|---|
+| `step` | `{type:'status', stage}` · `{type:'tool', name, phase:'start'|'end', status, latencyMs}` · `{type:'policy', …}` (staff playground only) |
+| `delta` | `{text}` chunks of the final answer |
+| `done` | the same payload as the non-streaming endpoint |
+| `error` | `{code, message}` |
+
+Patient-facing streams never include the trace or policy reasons. The client (`api.stream`) falls back to the JSON endpoint only if the stream never started (proxy without SSE), never after a turn ran.
+
+## Model providers (2026)
+
+- **Anthropic** — default `claude-sonnet-5-5`; also `claude-haiku-4-5-20251001` (lowest cost) and `claude-opus-5-5`. Claude 5.x rejects non-default sampling parameters and enables adaptive thinking by default, so the provider omits `temperature` and sends `thinking: {type: "between_tools"}` + `output_config.effort: "low"` for receptionist-grade latency; Claude's own content blocks (including thinking signatures) are replayed verbatim inside the tool loop.
+- **OpenAI** — `max_completion_tokens`; `temperature` only for GPT-4.x models.
+- **Gemini** — model parts (with thought signatures) are echoed back unchanged during function calling.
+- Any other model id can be typed in Settings → AI; ids are validated for shape, not against a fixed list.
+
+## Feedback
+
+Patients (portal, webchat) and staff (playground) can rate any assistant reply 👍/👎. Ratings are stored on the message (`feedback`, `feedback_at`) and reported as the satisfaction KPI in analytics and the dashboard briefing.
+
+## v3 additions
+
+- **Tools**: `confirmAttendance` (patient confirms an upcoming appointment) and `addToWaitlist` (offered when no slot fits).
+- **Consent gate**: on web chat, WhatsApp and phone, `createPatient` is intercepted by the orchestrator until the person
+  accepts the privacy notice (consent card / "acepto"); declining stores nothing. Portal and playground are exempt
+  (consent captured at sign-up / staff testing).
+- **Deposits & extras**: `createAppointment` may return a held appointment with `paymentUrl`; the prompt and the local
+  engine say it is *held until the deposit is paid*, never "confirmed". `videoUrl` / `intakeUrl` are mentioned when present.
+- **Intents**: `join_waitlist`, `confirm_attendance`, `opt_out` (BAJA/STOP withdraws marketing consent),
+  `third_party_data` (requests for someone else's data are refused politely).
+- **Self-harm language** gets a dedicated, supportive crisis message plus a critical handoff.
+- **Budget cap**: when the plan's monthly AI budget is exhausted the turn runs on the local engine (trace step `ai_budget`).
+- **Subscription inactive**: public channels get a polite redirect to the clinic phone without calling the model.
+- **Phone channel**: same orchestrator; cards are rendered as spoken numbered options.
+- **Evaluation**: `npm run eval -w backend` (golden, safety, injection and privacy cases).

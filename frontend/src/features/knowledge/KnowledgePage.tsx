@@ -65,6 +65,9 @@ export default function KnowledgePage() {
               <Button variant="secondary" onClick={() => setDialog('url')}>
                 {t('knowledge.addUrl')}
               </Button>
+              <Button variant="secondary" icon={<HiOutlineGlobeAlt aria-hidden="true" />} onClick={() => setDialog('website')}>
+                {t('admin.website.button')}
+              </Button>
             </>
           )
         }

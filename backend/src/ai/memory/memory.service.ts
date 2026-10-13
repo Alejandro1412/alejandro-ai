@@ -23,7 +23,7 @@ export class MemoryService {
 
   async shortTerm(conversationId: string, excludeMessageId?: string): Promise<ChatMessage[]> {
     const rows = await this.db
-      .select({ id: messages.id, role: messages.role, content: messages.content })
+      .select({ id: messages.id, role: messages.role, content: messages.content, attachments: messages.attachments })
       .from(messages)
       .where(tenantScope(messages, eq(messages.conversationId, conversationId)))
       .orderBy(desc(messages.createdAt))
@@ -32,7 +32,8 @@ export class MemoryService {
     let budget = MemoryService.SHORT_TERM_CHAR_BUDGET;
     for (const r of rows) {
       if (r.id === excludeMessageId || r.role === 'SYSTEM' || r.role === 'TOOL') continue;
-      const content = r.role === 'STAFF' ? `[Clinic staff]: ${r.content}` : r.content;
+      const note = r.role === 'ASSISTANT' ? shownNote(r.attachments as unknown[]) : '';
+      const content = r.role === 'STAFF' ? `[Clinic staff]: ${r.content}` : note ? `${r.content}\n${note}` : r.content;
       budget -= content.length;
       if (budget < 0) break;
       out.push(r.role === 'USER' ? { role: 'user', content } : { role: 'assistant', content });
@@ -57,4 +58,28 @@ export class MemoryService {
     }
     return { name: personName(p), facts };
   }
+}
+
+/**
+ * Compact, id-bearing summary of the cards an assistant message displayed, so a real LLM can resolve
+ * references like "the second one" or "Friday at 8" in later turns.
+ */
+export function shownNote(attachments: unknown[] | null | undefined): string {
+  const parts: string[] = [];
+  for (const a of (attachments ?? []) as Record<string, unknown>[]) {
+    if (a.type === 'slots') {
+      const groups = a.groups as { doctorId: string; doctorName: string; slots: { start: string }[] }[];
+      const list = groups.flatMap((g) => g.slots.slice(0, 8).map((x) => `${g.doctorName} (doctorId ${g.doctorId}) ${x.start}`));
+      parts.push(`slots for ${a.mode}${a.appointmentId ? ` of appointment ${a.appointmentId}` : ''}: ${list.join('; ')}`);
+    } else if (a.type === 'appointments') {
+      const items = a.items as { id: string; doctorName: string; start: string }[];
+      parts.push(`appointments (${a.purpose}): ${items.map((i) => `${i.id} ${i.doctorName} ${i.start}`).join('; ')}`);
+    } else if (a.type === 'appointment') {
+      const ap = a.appointment as { id: string; doctorName: string; start: string };
+      parts.push(`appointment ${a.state}: ${ap.id} ${ap.doctorName} ${ap.start}`);
+    } else if (a.type === 'confirm') {
+      parts.push(`awaiting confirmation of ${JSON.stringify(a.action)}`);
+    }
+  }
+  return parts.length ? `[shown: ${parts.join(' | ').slice(0, 1200)}]` : '';
 }

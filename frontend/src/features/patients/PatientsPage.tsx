@@ -1,6 +1,6 @@
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
-import { HiMagnifyingGlass, HiOutlineUsers, HiPlus } from 'react-icons/hi2';
+import { HiMagnifyingGlass, HiOutlineArrowUpTray, HiOutlineUsers, HiPlus } from 'react-icons/hi2';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/Button';
 import { DataTable } from '@/components/ui/DataTable';
@@ -12,7 +12,14 @@ import { usePreferences, useT } from '@/contexts/PreferencesContext';
 import { api } from '@/lib/api';
 import { fmtDate, fmtDateTime, fullName } from '@/lib/format';
 import type { Patient } from '@/types';
+import { CsvImportDialog } from './CsvImportDialog';
 import { PatientFormDialog } from './PatientFormDialog';
+
+const PATIENTS_TEMPLATE = [
+  'nombre;apellido;telefono;email;documento;fecha_nacimiento;idioma;etiquetas',
+  'María;Gómez;+573001112233;maria.gomez@example.com;1020304050;1990-05-14;es;control|vip',
+  'John;Smith;+13055550123;john.smith@example.com;;1985-11-02;en;',
+].join('\r\n');
 
 export default function PatientsPage() {
   const t = useT();
@@ -23,6 +30,7 @@ export default function PatientsPage() {
   const [search, setSearch] = useState('');
   const [page, setPage] = useState(1);
   const [creating, setCreating] = useState(false);
+  const [importing, setImporting] = useState(false);
   useEffect(() => {
     const id = setTimeout(() => {
       setSearch(input);
@@ -39,9 +47,14 @@ export default function PatientsPage() {
         subtitle={t('patients.subtitle')}
         actions={
           can('patients.create') && (
-            <Button icon={<HiPlus aria-hidden="true" />} onClick={() => setCreating(true)}>
-              {t('patients.new')}
-            </Button>
+            <>
+              <Button variant="secondary" icon={<HiOutlineArrowUpTray aria-hidden="true" />} onClick={() => setImporting(true)}>
+                {t('admin.import.button')}
+              </Button>
+              <Button icon={<HiPlus aria-hidden="true" />} onClick={() => setCreating(true)}>
+                {t('patients.new')}
+              </Button>
+            </>
           )
         }
       />
@@ -120,6 +133,16 @@ export default function PatientsPage() {
           </>
         )}
       </Card>
+      <CsvImportDialog
+        open={importing}
+        onClose={() => setImporting(false)}
+        title={t('admin.import.patientsTitle')}
+        endpoint="/patients/import"
+        headersHelp={t('admin.import.patientsHeaders')}
+        template={PATIENTS_TEMPLATE}
+        templateName="plantilla-pacientes.csv"
+        invalidate={['patients']}
+      />
       <PatientFormDialog open={creating} onClose={() => setCreating(false)} onSaved={(p) => nav(`/patients/${p.id}`)} />
     </div>
   );

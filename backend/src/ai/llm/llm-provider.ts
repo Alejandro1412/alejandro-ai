@@ -18,7 +18,11 @@ export interface ToolCall {
 
 export type ChatMessage =
   | { role: 'user'; content: string }
-  | { role: 'assistant'; content: string; toolCalls?: ToolCall[] }
+  /**
+   * `raw` keeps the provider's original content blocks (e.g. Claude thinking blocks, Gemini thought
+   * signatures) so they can be echoed back verbatim inside the same tool-use loop, as those APIs require.
+   */
+  | { role: 'assistant'; content: string; toolCalls?: ToolCall[]; raw?: { provider: string; content: unknown } }
   | { role: 'tool'; toolCallId: string; name: string; content: string };
 
 /** Structured signals computed by the orchestrator (intent, entities…). Real LLMs get them in the prompt too. */
@@ -36,6 +40,8 @@ export interface TurnHints {
   catalog: { specialties: { id: string; name: string; nameEn: string | null }[] };
   clinicName: string;
   lastAssistantMessage: string | null;
+  /** Guided-journey state computed by the orchestrator (booking / cancel / reschedule progress). */
+  journey?: { flow: string; step: string } | null;
 }
 
 export interface LLMRequest {
@@ -58,7 +64,9 @@ export interface LLMResponse {
   toolCalls: ToolCall[];
   usage: LLMUsage;
   model: string;
-  finishReason: 'stop' | 'tool_calls' | 'length' | 'error';
+  finishReason: 'stop' | 'tool_calls' | 'length' | 'refusal' | 'error';
+  /** Provider-native assistant content to replay in the next request of the same turn. */
+  raw?: { provider: string; content: unknown };
 }
 
 export interface LLMProvider {
