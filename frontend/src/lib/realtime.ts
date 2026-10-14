@@ -6,6 +6,9 @@ import { tokenStore } from './api';
 let socket: Socket | null = null;
 let currentToken: string | null = null;
 
+/** Serverless deployments (Vercel) have no WebSocket server: screens refresh on focus/refetch instead. */
+const REALTIME_DISABLED = import.meta.env.VITE_DISABLE_REALTIME === 'true';
+
 function connect(token: string): Socket {
   if (socket && currentToken === token) return socket;
   socket?.disconnect();
@@ -30,7 +33,7 @@ const EVENT_QUERIES: Record<string, string[][]> = {
 export function useRealtime(enabled: boolean, onEvent?: (event: string, payload: Record<string, unknown>) => void) {
   const qc = useQueryClient();
   useEffect(() => {
-    if (!enabled) return;
+    if (!enabled || REALTIME_DISABLED) return;
     let s: Socket | null = null;
     const handlers: [string, (p: Record<string, unknown>) => void][] = [];
     const bind = (token: string | null) => {

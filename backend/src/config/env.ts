@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { z } from 'zod';
 
 /**
@@ -110,8 +111,34 @@ export type Env = z.infer<typeof envSchema>;
 
 let cached: Env | null = null;
 
+/**
+ * Zero-config demo deployments (Vercel + a Postgres integration): when explicit secrets are not set,
+ * derive stable ones from DATABASE_URL (itself a secret) so every serverless instance agrees.
+ * Set JWT_SECRET / JWT_REFRESH_SECRET / ENCRYPTION_KEY explicitly for real production use.
+ */
+function withPlatformDefaults(source: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const out = { ...source };
+  out.DATABASE_URL ||= source.POSTGRES_URL || source.DATABASE_URL_UNPOOLED || source.POSTGRES_URL_NON_POOLING;
+  if (source.VERCEL && out.DATABASE_URL) {
+    const derive = (label: string) => createHash('sha256').update(`alejandro-ai:${label}:${out.DATABASE_URL}`).digest('hex');
+    out.JWT_SECRET ||= derive('jwt-access');
+    out.JWT_REFRESH_SECRET ||= derive('jwt-refresh');
+    out.ENCRYPTION_KEY ||= derive('encryption-key');
+    const host = source.VERCEL_PROJECT_PRODUCTION_URL || source.VERCEL_URL;
+    if (host) {
+      out.APP_URL ||= `https://${host}`;
+      out.API_URL ||= `https://${host}`;
+      out.CORS_ORIGINS ||= [`https://${host}`, source.VERCEL_URL ? `https://${source.VERCEL_URL}` : ''].filter(Boolean).join(',');
+    }
+    out.NODE_ENV ||= 'production';
+    out.SWAGGER_ENABLED ||= 'false';
+    if (!out.REDIS_URL) out.QUEUE_DRIVER = 'inline';
+  }
+  return out;
+}
+
 export function loadEnv(source: NodeJS.ProcessEnv = process.env): Env {
-  const parsed = envSchema.safeParse(source);
+  const parsed = envSchema.safeParse(withPlatformDefaults(source));
   if (!parsed.success) {
     const issues = parsed.error.issues.map((i) => `  - ${i.path.join('.')}: ${i.message}`).join('\n');
     throw new Error(`Invalid environment configuration:\n${issues}`);

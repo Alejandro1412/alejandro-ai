@@ -1,10 +1,20 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": "vite",
-  "installCommand": "npm ci --workspace frontend --include-workspace-root",
-  "buildCommand": "npm run build --workspace frontend",
+  "installCommand": "npm ci",
+  "buildCommand": "npm run build --workspace backend && VITE_DISABLE_REALTIME=true npm run build --workspace frontend",
   "outputDirectory": "frontend/dist",
+  "functions": {
+    "api/index.js": {
+      "maxDuration": 300,
+      "includeFiles": "backend/dist/**"
+    }
+  },
   "rewrites": [
+    {
+      "source": "/api/(.*)",
+      "destination": "/api/index"
+    },
     {
       "source": "/(.*)",
       "destination": "/index.html"
