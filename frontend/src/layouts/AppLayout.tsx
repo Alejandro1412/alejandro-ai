@@ -1,7 +1,6 @@
 import { Menu, MenuButton, MenuItem, MenuItems } from '@headlessui/react';
-import { useQuery } from '@tanstack/react-query';
 import { Suspense, useCallback, useState } from 'react';
-import { HiBars3, HiMagnifyingGlass, HiOutlineArrowRightOnRectangle, HiOutlineBell, HiOutlineEllipsisHorizontal, HiOutlineUserCircle } from 'react-icons/hi2';
+import { HiBars3, HiMagnifyingGlass, HiOutlineArrowRightOnRectangle, HiOutlineEllipsisHorizontal, HiOutlineUserCircle } from 'react-icons/hi2';
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { Logo, Isotype } from '@/components/brand/Logo';
 import { Avatar, Badge, Kbd } from '@/components/ui/Display';
@@ -12,10 +11,10 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useT } from '@/contexts/PreferencesContext';
 import { NAV, type NavItem } from '@/config/nav';
 import { AccountBanners } from '@/features/admin/AccountBanners';
-import { api } from '@/lib/api';
 import { cn } from '@/lib/format';
 import { useRealtime } from '@/lib/realtime';
 import { A11yButton, LangSwitch, ThemeMenu } from './Controls';
+import { NotificationButton } from './NotificationButton';
 import { CommandPalette } from './CommandPalette';
 import { PageLoader } from './PageLoader';
 
@@ -91,8 +90,6 @@ export function AppLayout() {
   const groups = useNavItems();
   const mobileItems = groups.flatMap((g) => g.items).filter((i) => i.mobile).slice(0, 4);
 
-  const unread = useQuery({ queryKey: ['notifications', 'unread'], queryFn: () => api.get<{ unread: number }>('/notifications/unread-count'), refetchInterval: 60_000 });
-
   const onEvent = useCallback(
     (event: string, payload: Record<string, unknown>) => {
       if (event === 'handoff.created') toast.info(t('chat.handoff'), `${t('chat.urgency')}: ${t(`urgency.${String(payload.urgency)}` as never)}`);
@@ -158,10 +155,7 @@ export function AppLayout() {
               <ThemeMenu />
             </span>
             <A11yButton />
-            <NavLink to="/notifications" className="relative grid h-10 w-10 place-items-center rounded-xl text-lg text-ink-2 hover:bg-surface-2 hover:text-ink" aria-label={`${t('nav.notifications')}${unread.data?.unread ? ` (${unread.data.unread})` : ''}`} data-no-underline>
-              <HiOutlineBell aria-hidden="true" />
-              {Boolean(unread.data?.unread) && <span className="absolute right-1.5 top-1.5 grid h-4 min-w-4 place-items-center rounded-full bg-danger px-1 text-[0.6rem] font-bold text-white">{unread.data!.unread > 9 ? '9+' : unread.data!.unread}</span>}
-            </NavLink>
+            <NotificationButton />
             <Menu as="div" className="relative ml-1">
               <MenuButton className="flex items-center gap-2 rounded-xl p-1 hover:bg-surface-2" aria-label={me?.user.name}>
                 <Avatar name={me?.user.name ?? '?'} size={34} />

@@ -24,6 +24,8 @@ export default function NotificationsPage() {
   const [unreadOnly, setUnreadOnly] = useState(false);
   const [page, setPage] = useState(1);
   const q = useQuery({ queryKey: ['notifications', { unreadOnly, page }], queryFn: () => api.page<Notification>('/notifications', { unreadOnly, page, pageSize: 20 }) });
+  const unreadCountQuery = useQuery({ queryKey: ['notifications', 'unread'], queryFn: () => api.get<{ unread: number }>('/notifications/unread-count') });
+  const unreadCount = unreadCountQuery.data?.unread ?? 0;
   const refresh = () => void qc.invalidateQueries({ queryKey: ['notifications'] });
   const readAll = useMutation({ mutationFn: () => api.post('/notifications/read-all'), onSuccess: refresh });
   const read = useMutation({ mutationFn: (id: string) => api.post(`/notifications/${id}/read`), onSuccess: refresh });
@@ -38,10 +40,20 @@ export default function NotificationsPage() {
   return (
     <div className="mx-auto max-w-3xl space-y-5">
       <PageHeader
-        title={t('notifications.title')}
+        title={
+          <span className="inline-flex items-center gap-3">
+            <span>{t('notifications.title')}</span>
+            {unreadCount > 0 && (
+              <span className="inline-flex items-center gap-1.5 rounded-full bg-rose-500/10 px-2.5 py-0.5 text-xs font-semibold text-rose-600 ring-1 ring-inset ring-rose-500/25 dark:bg-rose-500/20 dark:text-rose-300">
+                <span className="h-1.5 w-1.5 rounded-full bg-rose-500 animate-pulse" />
+                {unreadCount} {t('notifications.unreadOnly')}
+              </span>
+            )}
+          </span>
+        }
         subtitle={t('notifications.subtitle')}
         actions={
-          <Button variant="secondary" onClick={() => readAll.mutate()} loading={readAll.isPending}>
+          <Button variant="secondary" onClick={() => readAll.mutate()} loading={readAll.isPending} disabled={unreadCount === 0}>
             {t('notifications.markAll')}
           </Button>
         }
@@ -61,14 +73,18 @@ export default function NotificationsPage() {
                 const Icon = icons[n.type] ?? HiOutlineCalendarDays;
                 return (
                   <li key={n.id}>
-                    <button type="button" onClick={() => open(n)} className={cn('flex w-full items-start gap-3 px-4 py-3.5 text-left transition hover:bg-surface-2', !n.readAt && 'bg-primary-soft/40')}>
-                      <span className={cn('grid h-9 w-9 shrink-0 place-items-center rounded-xl text-lg', n.type === 'HUMAN_HANDOFF' ? 'bg-warning-soft text-warning' : n.type === 'SYSTEM_ALERT' ? 'bg-danger-soft text-danger' : 'bg-primary-soft text-primary')}>
+                    <button type="button" onClick={() => open(n)} className={cn('flex w-full items-start gap-3.5 px-4 py-3.5 text-left transition hover:bg-surface-2', !n.readAt && 'bg-primary-soft/30')}>
+                      <span className={cn('grid h-9 w-9 shrink-0 place-items-center rounded-xl text-lg shadow-xs', n.type === 'HUMAN_HANDOFF' ? 'bg-warning-soft text-warning' : n.type === 'SYSTEM_ALERT' ? 'bg-danger-soft text-danger' : 'bg-primary-soft text-primary')}>
                         <Icon aria-hidden="true" />
                       </span>
                       <span className="min-w-0 flex-1">
                         <span className="flex items-center gap-2">
-                          <span className="text-sm font-semibold">{n.title}</span>
-                          {!n.readAt && <span className="h-2 w-2 rounded-full bg-primary" aria-label="unread" />}
+                          <span className="text-sm font-semibold text-ink">{n.title}</span>
+                          {!n.readAt && (
+                            <span className="inline-flex items-center gap-1 rounded-full bg-rose-500/10 px-1.5 py-0.5 text-[0.65rem] font-bold text-rose-600 dark:bg-rose-500/20 dark:text-rose-400" aria-label="unread">
+                              <span className="h-1.5 w-1.5 rounded-full bg-rose-500" />
+                            </span>
+                          )}
                         </span>
                         <span className="mt-0.5 block text-sm text-ink-2">{n.body}</span>
                         <span className="mt-1 block text-xs text-ink-3">{fmtRelative(n.createdAt, prefs.lang)}</span>
