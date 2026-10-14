@@ -205,4 +205,9 @@ export const pubEs = {
     notFoundTitle: 'Documento no encontrado',
     notFoundBody: 'El documento legal que buscas no existe. Estos son los disponibles:',
   },
+  chatOffline: {
+    title: 'El asistente no está disponible en este momento',
+    body: 'No pudimos conectar con el servidor. Inténtalo de nuevo en unos minutos.',
+    retry: 'Reintentar',
+  },
 };

@@ -91,9 +91,11 @@ export function LandingChatWidget() {
         hidden={!open}
         data-lenis-prevent
         className={cn(
-          'fixed z-[56] flex flex-col overflow-hidden border border-border bg-bg shadow-[0_30px_90px_-20px_rgba(15,23,42,.45)]',
+          // `hidden` attribute alone loses to the `flex` utility, so hide with a class too.
+          !open && 'hidden',
+          'fixed z-[56] flex-col overflow-hidden border border-border bg-bg shadow-[0_30px_90px_-20px_rgba(15,23,42,.45)]',
           'inset-0 sm:inset-auto sm:bottom-24 sm:right-6 sm:h-[min(640px,calc(100dvh-8rem))] sm:w-[400px] sm:rounded-3xl',
-          open && 'animate-slide-up',
+          open && 'flex animate-slide-up',
         )}
       >
         <header className="flex items-center gap-3 bg-gradient-to-r from-[#060a17] to-[#1e1b4b] px-4 py-3 text-white">

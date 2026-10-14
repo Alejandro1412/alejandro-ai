@@ -206,4 +206,9 @@ export const pubEn: typeof pubEs = {
     notFoundTitle: 'Document not found',
     notFoundBody: 'The legal document you are looking for does not exist. These are available:',
   },
+  chatOffline: {
+    title: 'The assistant is not available right now',
+    body: 'We could not reach the server. Please try again in a few minutes.',
+    retry: 'Try again',
+  },
 };

@@ -1,3 +1,4 @@
+import { HiOutlineSignalSlash } from 'react-icons/hi2';
 import { Isotype } from '@/components/brand/Logo';
 import { ChatThread } from '@/components/chat/ChatThread';
 import { Skeleton } from '@/components/ui/Feedback';
@@ -17,7 +18,16 @@ export function WebchatPanel({ w, poweredBy = true }: { w: ReturnType<typeof use
             <Skeleton className="h-10 w-1/2 rounded-2xl" />
           </div>
         ) : failed ? (
-          <p className="p-6 text-center text-sm text-ink-2">{t('chat.errorSend')}</p>
+          <div className="flex flex-1 flex-col items-center justify-center gap-3 p-6 text-center" role="status">
+            <span className="grid h-12 w-12 place-items-center rounded-2xl bg-warning-soft text-2xl text-warning" aria-hidden="true">
+              <HiOutlineSignalSlash />
+            </span>
+            <p className="font-semibold text-ink">{t('pub.chatOffline.title')}</p>
+            <p className="max-w-xs text-sm text-ink-2">{t('pub.chatOffline.body')}</p>
+            <button type="button" onClick={() => window.location.reload()} className="rounded-xl border border-border px-4 py-2 text-sm font-semibold text-ink hover:bg-surface-2">
+              {t('pub.chatOffline.retry')}
+            </button>
+          </div>
         ) : (
           <ChatThread
             messages={chat.messages}
